@@ -23,7 +23,7 @@ macro_rules! get_field {
 }
 
 #[derive(PartialEq, Debug)]
-struct Metainfo {
+pub struct Metainfo {
     announce: String,
     info: Info,
     info_hash: Vec<u8>,
@@ -93,7 +93,7 @@ impl FromBencode for Info {
 }
 
 #[derive(Debug)]
-enum MetainfoError {
+pub enum MetainfoError {
     IoError(io::Error),
     DecodingError(bencode::streaming::Error),
     NotADict,
@@ -127,15 +127,7 @@ impl convert::From<StringFromBencodeError> for MetainfoError {
     }
 }
 
-pub fn run() {
-    let result = parse_torrent_file("test_data/flagfromserver.torrent");
-    match result {
-        Ok(s)  => println!("Yay, it worked: {:?}", s),
-        Err(e) => println!("Oops, it failed: {:?}", e)
-    }
-}
-
-fn parse_torrent_file(filename: &str) -> Result<Metainfo, MetainfoError> {
+pub fn parse(filename: &str) -> Result<Metainfo, MetainfoError> {
     // read the torrent file into a byte vector
     let mut f = try!(File::open(filename));
     let mut v = Vec::new();
