@@ -24,10 +24,10 @@ macro_rules! get_field {
 
 #[derive(PartialEq, Debug)]
 pub struct Metainfo {
-    announce: String,
-    info: Info,
-    info_hash: Vec<u8>,
-    created_by: String,
+    pub announce: String,
+    pub info: Info,
+    pub info_hash: Vec<u8>,
+    pub created_by: String,
 }
 
 impl FromBencode for Metainfo {
@@ -56,11 +56,11 @@ impl FromBencode for Metainfo {
 }
 
 #[derive(PartialEq, Debug)]
-struct Info {
-    piece_length: u32,
-    pieces: Vec<u8>,
-    name: String,
-    length: u32,
+pub struct Info {
+    pub piece_length: u32,
+    pub pieces: Vec<u8>,
+    pub name: String,
+    pub length: u32,
 }
 
 impl FromBencode for Info {
