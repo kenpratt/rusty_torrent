@@ -1,3 +1,5 @@
+mod metainfo;
+
 fn main() {
-    println!("Hello, world!");
+    metainfo::run();
 }
