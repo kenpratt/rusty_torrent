@@ -1,0 +1,5 @@
+[package]
+name = "rusty_torrent"
+version = "0.0.1"
+
+[dependencies]
