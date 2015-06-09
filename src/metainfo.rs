@@ -6,6 +6,21 @@ use std::fs::File;
 use std::io::Read;
 use std::{convert, io};
 
+macro_rules! get_field_with_default {
+    ($m:expr, $field:expr, $default:expr) => (
+        match $m.get(&ByteString::from_str($field)) {
+            Some(a) => try!(FromBencode::from_bencode(a)),
+            None => $default
+        };
+    )
+}
+
+macro_rules! get_field {
+    ($m:expr, $field:expr) => (
+        get_field_with_default!($m, $field, return Err(MetainfoError::DoesntContain($field)))
+    )
+}
+
 #[derive(PartialEq, Debug)]
 struct Metainfo {
     announce: String,
@@ -18,17 +33,11 @@ impl FromBencode for Metainfo {
     fn from_bencode(bencode: &bencode::Bencode) -> Result<Metainfo, MetainfoError> {
         match bencode {
             &Bencode::Dict(ref m) => {
-                let announce = match m.get(&ByteString::from_str("announce")) {
-                    Some(a) => try!(FromBencode::from_bencode(a)),
-                    None => return Err(MetainfoError::DoesntContain("announce"))
+                let metainfo = Metainfo{
+                    announce: get_field!(m, "announce"),
+                    created_by: get_field_with_default!(m, "created by", "".to_string()),
                 };
-
-                let created_by = match m.get(&ByteString::from_str("created by")) {
-                    Some(a) => try!(FromBencode::from_bencode(a)),
-                    None => "".to_string()
-                };
-
-                Ok(Metainfo{ announce: announce, created_by: created_by })
+                Ok(metainfo)
             }
             _ => Err(MetainfoError::NotADict)
         }
