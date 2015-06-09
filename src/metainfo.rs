@@ -14,9 +14,23 @@ struct Metainfo {
 
 #[derive(Debug)]
 enum MetainfoError {
+    IoError(io::Error),
+    DecodingError(bencode::streaming::Error),
     NotADict,
     DoesntContain(&'static str),
     NotAString(StringFromBencodeError),
+}
+
+impl convert::From<io::Error> for MetainfoError {
+    fn from(err: io::Error) -> MetainfoError {
+        MetainfoError::IoError(err)
+    }
+}
+
+impl convert::From<bencode::streaming::Error> for MetainfoError {
+    fn from(err: bencode::streaming::Error) -> MetainfoError {
+        MetainfoError::DecodingError(err)
+    }
 }
 
 impl convert::From<StringFromBencodeError> for MetainfoError {
@@ -52,19 +66,19 @@ pub fn run() {
     let result = parse_torrent_file("test_data/flagfromserver.torrent");
     match result {
         Ok(s)  => println!("Yay, it worked: {:?}", s),
-        Err(e) => println!("Oops, it failed: {}", e)
+        Err(e) => println!("Oops, it failed: {:?}", e)
     }
 }
 
-fn parse_torrent_file(filename: &str) -> Result<Metainfo, io::Error> {
+fn parse_torrent_file(filename: &str) -> Result<Metainfo, MetainfoError> {
     // read the torrent file into a byte vector
     let mut f = try!(File::open(filename));
     let mut v = Vec::new();
     try!(f.read_to_end(&mut v));
 
     // decode the byte vector into a struct
-    let bencode = bencode::from_vec(v).unwrap();
-    let result = FromBencode::from_bencode(&bencode).unwrap();
+    let bencode = try!(bencode::from_vec(v));
+    let result = try!(FromBencode::from_bencode(&bencode));
 
     Ok(result)
 }
