@@ -1,6 +1,6 @@
 extern crate bencode;
 
-use self::bencode::{FromBencode, Bencode, StringFromBencodeError};
+use self::bencode::{FromBencode, Bencode, NumFromBencodeError, StringFromBencodeError};
 use self::bencode::util::ByteString;
 use std::fs::File;
 use std::io::Read;
@@ -24,6 +24,7 @@ macro_rules! get_field {
 #[derive(PartialEq, Debug)]
 struct Metainfo {
     announce: String,
+    info: Info,
     created_by: String,
 }
 
@@ -35,9 +36,33 @@ impl FromBencode for Metainfo {
             &Bencode::Dict(ref m) => {
                 let metainfo = Metainfo{
                     announce: get_field!(m, "announce"),
+                    info: get_field!(m, "info"),
                     created_by: get_field_with_default!(m, "created by", "".to_string()),
                 };
                 Ok(metainfo)
+            }
+            _ => Err(MetainfoError::NotADict)
+        }
+    }
+}
+
+#[derive(PartialEq, Debug)]
+struct Info {
+    piece_length: u32,
+    name: String,
+}
+
+impl FromBencode for Info {
+    type Err = MetainfoError;
+
+    fn from_bencode(bencode: &bencode::Bencode) -> Result<Info, MetainfoError> {
+        match bencode {
+            &Bencode::Dict(ref m) => {
+                let info = Info{
+                    piece_length: get_field!(m, "piece length"),
+                    name: get_field!(m, "name"),
+                };
+                Ok(info)
             }
             _ => Err(MetainfoError::NotADict)
         }
@@ -50,6 +75,7 @@ enum MetainfoError {
     DecodingError(bencode::streaming::Error),
     NotADict,
     DoesntContain(&'static str),
+    NotANumber(NumFromBencodeError),
     NotAString(StringFromBencodeError),
 }
 
@@ -62,6 +88,12 @@ impl convert::From<io::Error> for MetainfoError {
 impl convert::From<bencode::streaming::Error> for MetainfoError {
     fn from(err: bencode::streaming::Error) -> MetainfoError {
         MetainfoError::DecodingError(err)
+    }
+}
+
+impl convert::From<NumFromBencodeError> for MetainfoError {
+    fn from(err: NumFromBencodeError) -> MetainfoError {
+        MetainfoError::NotANumber(err)
     }
 }
 
