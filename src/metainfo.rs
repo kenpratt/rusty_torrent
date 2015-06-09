@@ -12,6 +12,29 @@ struct Metainfo {
     created_by: String,
 }
 
+impl FromBencode for Metainfo {
+    type Err = MetainfoError;
+
+    fn from_bencode(bencode: &bencode::Bencode) -> Result<Metainfo, MetainfoError> {
+        match bencode {
+            &Bencode::Dict(ref m) => {
+                let announce = match m.get(&ByteString::from_str("announce")) {
+                    Some(a) => try!(FromBencode::from_bencode(a)),
+                    None => return Err(MetainfoError::DoesntContain("announce"))
+                };
+
+                let created_by = match m.get(&ByteString::from_str("created by")) {
+                    Some(a) => try!(FromBencode::from_bencode(a)),
+                    None => "".to_string()
+                };
+
+                Ok(Metainfo{ announce: announce, created_by: created_by })
+            }
+            _ => Err(MetainfoError::NotADict)
+        }
+    }
+}
+
 #[derive(Debug)]
 enum MetainfoError {
     IoError(io::Error),
@@ -36,29 +59,6 @@ impl convert::From<bencode::streaming::Error> for MetainfoError {
 impl convert::From<StringFromBencodeError> for MetainfoError {
     fn from(err: StringFromBencodeError) -> MetainfoError {
         MetainfoError::NotAString(err)
-    }
-}
-
-impl FromBencode for Metainfo {
-    type Err = MetainfoError;
-
-    fn from_bencode(bencode: &bencode::Bencode) -> Result<Metainfo, MetainfoError> {
-        match bencode {
-            &Bencode::Dict(ref m) => {
-                let announce = match m.get(&ByteString::from_str("announce")) {
-                    Some(a) => try!(FromBencode::from_bencode(a)),
-                    None => return Err(MetainfoError::DoesntContain("announce"))
-                };
-
-                let created_by = match m.get(&ByteString::from_str("created by")) {
-                    Some(a) => try!(FromBencode::from_bencode(a)),
-                    None => "".to_string()
-                };
-
-                Ok(Metainfo{ announce: announce, created_by: created_by })
-            }
-            _ => Err(MetainfoError::NotADict)
-        }
     }
 }
 
