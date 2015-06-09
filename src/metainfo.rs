@@ -1,4 +1,5 @@
 extern crate bencode;
+extern crate sha1;
 
 use self::bencode::{FromBencode, Bencode, NumFromBencodeError, StringFromBencodeError};
 use self::bencode::util::ByteString;
@@ -25,6 +26,7 @@ macro_rules! get_field {
 struct Metainfo {
     announce: String,
     info: Info,
+    info_hash: Vec<u8>,
     created_by: String,
 }
 
@@ -34,9 +36,16 @@ impl FromBencode for Metainfo {
     fn from_bencode(bencode: &bencode::Bencode) -> Result<Metainfo, MetainfoError> {
         match bencode {
             &Bencode::Dict(ref m) => {
+                let info_bencode = match m.get(&ByteString::from_str("info")) {
+                    Some(a) => a,
+                    None => return Err(MetainfoError::DoesntContain("info"))
+                };
+                let info_hash = calculate_sha1(&try!(info_bencode.to_bytes()));
+
                 let metainfo = Metainfo{
                     announce: get_field!(m, "announce"),
                     info: get_field!(m, "info"),
+                    info_hash: info_hash,
                     created_by: get_field_with_default!(m, "created by", "".to_string()),
                 };
                 Ok(metainfo)
@@ -137,4 +146,10 @@ fn parse_torrent_file(filename: &str) -> Result<Metainfo, MetainfoError> {
     let result = try!(FromBencode::from_bencode(&bencode));
 
     Ok(result)
+}
+
+fn calculate_sha1(input: &[u8]) -> Vec<u8> {
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(input);
+    hasher.digest()
 }

@@ -4,3 +4,4 @@ version = "0.0.1"
 
 [dependencies]
 bencode = "0.1"
+sha1 = "0.1"
