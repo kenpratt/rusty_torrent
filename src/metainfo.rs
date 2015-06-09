@@ -4,7 +4,7 @@ use self::bencode::{FromBencode, Bencode, StringFromBencodeError};
 use self::bencode::util::ByteString;
 use std::fs::File;
 use std::io::Read;
-use std::io;
+use std::{convert, io};
 
 #[derive(PartialEq, Debug)]
 struct Metainfo {
@@ -13,31 +13,37 @@ struct Metainfo {
 }
 
 #[derive(Debug)]
-enum MyError {
+enum MetainfoError {
     NotADict,
     DoesntContain(&'static str),
-    ANotAString(StringFromBencodeError),
+    NotAString(StringFromBencodeError),
+}
+
+impl convert::From<StringFromBencodeError> for MetainfoError {
+    fn from(err: StringFromBencodeError) -> MetainfoError {
+        MetainfoError::NotAString(err)
+    }
 }
 
 impl FromBencode for Metainfo {
-    type Err = MyError;
+    type Err = MetainfoError;
 
-    fn from_bencode(bencode: &bencode::Bencode) -> Result<Metainfo, MyError> {
+    fn from_bencode(bencode: &bencode::Bencode) -> Result<Metainfo, MetainfoError> {
         match bencode {
             &Bencode::Dict(ref m) => {
-                let announce = try!(match m.get(&ByteString::from_str("announce")) {
-                    Some(a) => FromBencode::from_bencode(a).map_err(MyError::ANotAString),
-                    None => Err(MyError::DoesntContain("announce"))
-                });
+                let announce = match m.get(&ByteString::from_str("announce")) {
+                    Some(a) => try!(FromBencode::from_bencode(a)),
+                    None => return Err(MetainfoError::DoesntContain("announce"))
+                };
 
-                let created_by = try!(match m.get(&ByteString::from_str("created by")) {
-                    Some(a) => FromBencode::from_bencode(a).map_err(MyError::ANotAString),
-                    None => Ok("".to_string())
-                });
+                let created_by = match m.get(&ByteString::from_str("created by")) {
+                    Some(a) => try!(FromBencode::from_bencode(a)),
+                    None => "".to_string()
+                };
 
                 Ok(Metainfo{ announce: announce, created_by: created_by })
             }
-            _ => Err(MyError::NotADict)
+            _ => Err(MetainfoError::NotADict)
         }
     }
 }
