@@ -49,7 +49,9 @@ impl FromBencode for Metainfo {
 #[derive(PartialEq, Debug)]
 struct Info {
     piece_length: u32,
+    pieces: Vec<u8>,
     name: String,
+    length: u32,
 }
 
 impl FromBencode for Info {
@@ -58,9 +60,21 @@ impl FromBencode for Info {
     fn from_bencode(bencode: &bencode::Bencode) -> Result<Info, MetainfoError> {
         match bencode {
             &Bencode::Dict(ref m) => {
+                let pieces = match m.get(&ByteString::from_str("pieces")) {
+                    Some(a) => {
+                        match a {
+                            &Bencode::ByteString(ref v) => v.clone(),
+                            _ => return Err(MetainfoError::NotAByteString)
+                        }
+                    },
+                    None => return Err(MetainfoError::DoesntContain("pieces"))
+                };
+
                 let info = Info{
                     piece_length: get_field!(m, "piece length"),
+                    pieces: pieces,
                     name: get_field!(m, "name"),
+                    length: get_field!(m, "length"),
                 };
                 Ok(info)
             }
@@ -74,6 +88,7 @@ enum MetainfoError {
     IoError(io::Error),
     DecodingError(bencode::streaming::Error),
     NotADict,
+    NotAByteString,
     DoesntContain(&'static str),
     NotANumber(NumFromBencodeError),
     NotAString(StringFromBencodeError),
