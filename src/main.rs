@@ -4,6 +4,7 @@ mod decoder;
 mod metainfo;
 mod tracker;
 mod tracker_response;
+mod download;
 
 fn main() {
     match run() {
@@ -15,6 +16,7 @@ fn main() {
 fn run() -> Result<(), decoder::Error> {
     let filename = "test_data/flagfromserver.torrent";
     let metainfo = try!(metainfo::parse(filename));
-    tracker::run(metainfo);
+    let peers = try!(tracker::get_peers(&metainfo));
+    download::download(&metainfo, &peers);
     Ok(())
 }
