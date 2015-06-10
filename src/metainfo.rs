@@ -21,11 +21,8 @@ impl FromBencode for Metainfo {
     fn from_bencode(bencode: &bencode::Bencode) -> Result<Metainfo, decoder::Error> {
         match bencode {
             &Bencode::Dict(ref m) => {
-                let info_bencode = match m.get(&ByteString::from_str("info")) {
-                    Some(a) => a,
-                    None => return Err(decoder::Error::DoesntContain("info"))
-                };
-                let info_hash = calculate_sha1(&try!(info_bencode.to_bytes()));
+                let info_bytes = get_field_as_bencoded_bytes!(m, "info");
+                let info_hash = calculate_sha1(&info_bytes);
 
                 let metainfo = Metainfo{
                     announce: get_field!(m, "announce"),
@@ -54,19 +51,9 @@ impl FromBencode for Info {
     fn from_bencode(bencode: &bencode::Bencode) -> Result<Info, decoder::Error> {
         match bencode {
             &Bencode::Dict(ref m) => {
-                let pieces = match m.get(&ByteString::from_str("pieces")) {
-                    Some(a) => {
-                        match a {
-                            &Bencode::ByteString(ref v) => v.clone(),
-                            _ => return Err(decoder::Error::NotAByteString)
-                        }
-                    },
-                    None => return Err(decoder::Error::DoesntContain("pieces"))
-                };
-
                 let info = Info{
                     piece_length: get_field!(m, "piece length"),
-                    pieces: pieces,
+                    pieces: get_field_as_bytes!(m, "pieces"),
                     name: get_field!(m, "name"),
                     length: get_field!(m, "length"),
                 };

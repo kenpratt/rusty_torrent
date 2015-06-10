@@ -4,8 +4,6 @@ mod decoder;
 mod metainfo;
 mod tracker;
 
-use decoder::Error;
-
 fn main() {
     match run() {
         Ok(_)  => println!("Yay, it worked!"),

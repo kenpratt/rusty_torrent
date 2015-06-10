@@ -9,7 +9,7 @@ macro_rules! get_field_with_default {
         match $m.get(&ByteString::from_str($field)) {
             Some(a) => try!(FromBencode::from_bencode(a)),
             None => $default
-        };
+        }
     )
 }
 
@@ -17,6 +17,33 @@ macro_rules! get_field_with_default {
 macro_rules! get_field {
     ($m:expr, $field:expr) => (
         get_field_with_default!($m, $field, return Err(decoder::Error::DoesntContain($field)))
+    )
+}
+
+#[macro_export]
+macro_rules! get_raw_field {
+    ($m:expr, $field:expr) => (
+        match $m.get(&ByteString::from_str($field)) {
+            Some(a) => a,
+            None => return Err(decoder::Error::DoesntContain($field))
+        }
+    )
+}
+
+#[macro_export]
+macro_rules! get_field_as_bencoded_bytes {
+    ($m:expr, $field:expr) => (
+        try!(get_raw_field!($m, $field).to_bytes())
+    )
+}
+
+#[macro_export]
+macro_rules! get_field_as_bytes {
+    ($m:expr, $field:expr) => (
+        match get_raw_field!($m, $field) {
+            &Bencode::ByteString(ref v) => v.clone(),
+            _ => return Err(decoder::Error::NotAByteString)
+        }
     )
 }
 
