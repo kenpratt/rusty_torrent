@@ -21,6 +21,13 @@ macro_rules! get_field {
 }
 
 #[macro_export]
+macro_rules! get_optional_field {
+    ($m:expr, $field:expr) => (
+        get_field_with_default!($m, $field, None)
+    )
+}
+
+#[macro_export]
 macro_rules! get_raw_field {
     ($m:expr, $field:expr) => (
         match $m.get(&ByteString::from_str($field)) {

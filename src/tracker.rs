@@ -2,10 +2,11 @@ extern crate hyper;
 extern crate url;
 
 use metainfo::Metainfo;
-use std::io;
+use std::io::Read;
 use self::url::percent_encoding::{percent_encode, FORM_URLENCODED_ENCODE_SET};
 use self::hyper::Client;
 use self::hyper::header::Connection;
+use tracker_response::TrackerResponse;
 
 pub fn run(metainfo: Metainfo) {
     let length_string = metainfo.info.length.to_string();
@@ -20,11 +21,16 @@ pub fn run(metainfo: Metainfo) {
     let url = format!("{}?{}", metainfo.announce, encode_query_params(&params));
 
     let mut client = Client::new();
-    let mut res = client.get(&url).header(Connection::close()).send().unwrap();
+    let mut http_res = client.get(&url).header(Connection::close()).send().unwrap();
+    println!("Response: {}", http_res.status);
+    println!("Headers:\n{}", http_res.headers);
 
-    println!("Response: {}", res.status);
-    println!("Headers:\n{}", res.headers);
-    io::copy(&mut res, &mut io::stdout()).unwrap();
+    let mut body = Vec::new();
+    http_res.read_to_end(&mut body).unwrap();
+    // println!("Body:\n{:?}", body);
+
+    let res = TrackerResponse::parse(&body).unwrap();
+    println!("{:?}", res);
 }
 
 fn encode_query_params(params: &[(&str, &str)]) -> String {
