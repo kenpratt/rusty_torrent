@@ -1,10 +1,11 @@
 extern crate sha1;
 
 use bencode;
-use bencode::{FromBencode, Bencode};
+use bencode::{Bencode, FromBencode};
 use bencode::util::ByteString;
+use std::net::Ipv4Addr;
+
 use decoder;
-use std::net::{Ipv4Addr};
 
 #[derive(PartialEq, Debug)]
 pub struct TrackerResponse {

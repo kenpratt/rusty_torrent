@@ -1,14 +1,15 @@
 extern crate hyper;
 extern crate url;
 
-use metainfo::Metainfo;
 use std::{convert, io};
 use std::io::Read;
-use self::url::percent_encoding::{percent_encode, FORM_URLENCODED_ENCODE_SET};
 use self::hyper::Client;
 use self::hyper::header::Connection;
-use tracker_response::{TrackerResponse,Peer};
+use self::url::percent_encoding::{percent_encode, FORM_URLENCODED_ENCODE_SET};
+
 use decoder;
+use metainfo::Metainfo;
+use tracker_response::{Peer, TrackerResponse};
 
 pub fn get_peers(metainfo: &Metainfo) ->Result<Vec<Peer>, Error> {
     let length_string = metainfo.info.length.to_string();

@@ -1,10 +1,11 @@
 extern crate sha1;
 
 use bencode;
-use bencode::{FromBencode, Bencode};
+use bencode::{Bencode, FromBencode};
 use bencode::util::ByteString;
 use std::fs::File;
 use std::io::Read;
+
 use decoder;
 
 #[derive(PartialEq, Debug)]

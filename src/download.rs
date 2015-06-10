@@ -1,8 +1,9 @@
-use std::net::{TcpStream,Ipv4Addr};
+use std::{convert, io};
+use std::io::{Read, Write};
+use std::net::{Ipv4Addr, TcpStream};
+
 use metainfo::Metainfo;
 use tracker_response::Peer;
-use std::{convert, io};
-use std::io::{Write, Read};
 
 pub fn download(info: &Metainfo, peers: &[Peer]) {
     for peer in peers {
