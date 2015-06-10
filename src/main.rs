@@ -1,7 +1,10 @@
+extern crate bencode;
+
+mod decoder;
 mod metainfo;
 mod tracker;
 
-use metainfo::MetainfoError;
+use decoder::Error;
 
 fn main() {
     match run() {
@@ -10,7 +13,7 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), MetainfoError> {
+fn run() -> Result<(), decoder::Error> {
     let filename = "test_data/flagfromserver.torrent";
     let metainfo = try!(metainfo::parse(filename));
     tracker::run(metainfo);
