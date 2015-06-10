@@ -13,7 +13,7 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), decoder::Error> {
+fn run() -> Result<(), tracker::Error> {
     let filename = "test_data/flagfromserver.torrent";
     let metainfo = try!(metainfo::parse(filename));
     let peers = try!(tracker::get_peers(&metainfo));
