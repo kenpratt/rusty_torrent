@@ -16,6 +16,8 @@ pub fn download(info: &Metainfo, peers: &[Peer]) {
     }
 }
 
+const BLOCK_SIZE: usize = 16384;
+
 struct PeerConnection {
     stream: TcpStream,
     have: Vec<bool>,
@@ -121,13 +123,15 @@ impl PeerConnection {
             Message::Unchoke => {
                 if self.am_i_choked {
                     self.am_i_choked = false;
+                    let piece_index = self.next_piece_to_request();
+                    self.send_request(piece_index);
                 }
             }
             _ => panic!("Need to process message: {:?}", message)
         };
         Ok(())
     }
-    fn send_interested(&mut self) -> Result<(), Error>{
+    fn send_interested(&mut self) -> Result<(), Error> {
         if self.am_i_interested == false {
             let mut message = vec![];
             message.push(0);
@@ -138,6 +142,24 @@ impl PeerConnection {
             try!(self.stream.write_all(&message));
             self.am_i_interested = true;
         }
+        Ok(())
+    }
+
+    fn next_piece_to_request(&self) -> usize {
+        0
+    }
+
+    fn send_request(&mut self, piece: usize) -> Result<(), Error> {
+        let mut message = vec![];
+        message.push(0);
+        message.push(0);
+        message.push(0);
+        message.push(13);
+        message.push(6);
+        message.extend(convert_usize_to_bytes(piece).iter().cloned());
+        message.extend(convert_usize_to_bytes(0).iter().cloned());
+        message.extend(convert_usize_to_bytes(BLOCK_SIZE).iter().cloned());
+        try!(self.stream.write_all(&message));
         Ok(())
     }
 }
@@ -175,11 +197,28 @@ impl Message {
     }
 }
 
+const BYTE_0: usize = 256 * 256 * 256;
+const BYTE_1: usize = 256 * 256;
+const BYTE_2: usize = 256;
+const BYTE_3: usize = 1;
+
 fn convert_big_endian_to_integer(bytes: &[u8]) -> usize {
-    bytes[0] as usize * 16777216 + 
-    bytes[1] as usize * 65536 + 
-    bytes[2] as usize * 256 + 
-    bytes[3] as usize
+    bytes[0] as usize * BYTE_0 +
+    bytes[1] as usize * BYTE_1 +
+    bytes[2] as usize * BYTE_2 +
+    bytes[3] as usize * BYTE_3
+}
+
+fn convert_usize_to_bytes(integer: usize) -> Vec<u8> {
+    let mut rest = integer;
+    let first = rest / BYTE_0;
+    rest -= first * BYTE_0;
+    let second = rest / BYTE_1;
+    rest -= second * BYTE_1;
+    let third = rest / BYTE_2;
+    rest -= third * BYTE_2;
+    let fourth = rest;
+    vec![first as u8, second as u8, third as u8, fourth as u8]
 }
 
 #[derive(Debug)]
