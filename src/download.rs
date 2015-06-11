@@ -26,6 +26,10 @@ impl PeerConnection {
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
         let mut conn = PeerConnection { stream: stream };
         try!(conn.handshake(info_hash));
+        loop {
+            let message = try!(conn.receive_message());
+            println!("{:?}", message);
+        }
         Ok(conn)
     }
 
@@ -62,6 +66,18 @@ impl PeerConnection {
         Ok(())
     }
 
+    fn receive_message(&mut self) -> Result<Message, Error> {
+        let message_size = convert_big_endian_to_integer(&try!(self.read_n(4)));
+        if message_size > 0 {
+            let message = try!(self.read_n(message_size));
+            let message_id = &message[0];
+            let message_body = &message[1..];
+            Ok(Message::new(message_id, message_body))
+        } else {
+            Ok(Message::KeepAlive)
+        }
+    }
+
     fn read_n(&mut self, bytes_to_read: usize) -> Result<Vec<u8>, Error> {
         let mut buf = vec![];
         let bytes_read = (&mut self.stream).take(bytes_to_read as u64).read_to_end(&mut buf);
@@ -71,6 +87,46 @@ impl PeerConnection {
             Err(e) => try!(Err(e))
         }
     }
+}
+
+#[derive(Debug)]
+enum Message {
+    KeepAlive,
+    Choke,
+    Unchoke,
+    Interested,
+    NotInterested,
+    Have(usize),
+    Bitfield(Vec<u8>),
+    Request, // TODO add params
+    Piece,   // TODO add params
+    Cancel,  // TODO add params
+    Port,    // TODO add params
+}
+
+impl Message {
+    fn new(id: &u8, body: &[u8]) -> Message {
+        match *id {
+            0 => Message::Choke,
+            1 => Message::Unchoke,
+            2 => Message::Interested,
+            3 => Message::NotInterested,
+            4 => Message::Have(convert_big_endian_to_integer(body)),
+            5 => Message::Bitfield(body.to_owned()),
+            6 => Message::Request,
+            7 => Message::Piece,
+            8 => Message::Cancel,
+            9 => Message::Port,
+            _ => panic!("Bad message id: {}", id)
+        }
+    }
+}
+
+fn convert_big_endian_to_integer(bytes: &[u8]) -> usize {
+    bytes[0] as usize * 16777216 + 
+    bytes[1] as usize * 65536 + 
+    bytes[2] as usize * 256 + 
+    bytes[3] as usize
 }
 
 #[derive(Debug)]
