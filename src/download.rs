@@ -8,7 +8,7 @@ use tracker_response::Peer;
 pub fn download(info: &Metainfo, peers: &[Peer]) {
     for peer in peers {
         if peer.ip != Ipv4Addr::new(207, 251, 103, 46) {
-            match PeerConnection::connect(peer, &info.info_hash) {
+            match PeerConnection::connect(peer, &info) {
                 Ok(_) => println!("Peer done"),
                 Err(e) => println!("Error: {:?}", e)
             }
@@ -18,17 +18,22 @@ pub fn download(info: &Metainfo, peers: &[Peer]) {
 
 struct PeerConnection {
     stream: TcpStream,
+    have: Vec<bool>,
 }
 
 impl PeerConnection {
-    fn connect(peer: &Peer, info_hash: &[u8]) -> Result<PeerConnection, Error> {
+    fn connect(peer: &Peer, metainfo: &Metainfo) -> Result<PeerConnection, Error> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
-        let mut conn = PeerConnection { stream: stream };
-        try!(conn.handshake(info_hash));
+        let mut conn = PeerConnection {
+            stream: stream,
+            have:   vec![false; metainfo.info.pieces.len()],
+        };
+        try!(conn.handshake(&metainfo.info_hash));
         loop {
             let message = try!(conn.receive_message());
             println!("{:?}", message);
+            try!(conn.process(message));
         }
         Ok(conn)
     }
@@ -86,6 +91,26 @@ impl PeerConnection {
             Ok(_)  => Err(Error::NotEnoughData),
             Err(e) => try!(Err(e))
         }
+    }
+
+    fn process(&mut self, message: Message) -> Result<(), Error>{
+        match message {
+            Message::KeepAlive => {},
+            Message::Bitfield(bytes) => {
+                for have_index in 0..self.have.len() {
+                    let bytes_index = have_index / 8;
+                    let index_into_byte = have_index % 8;
+                    let byte = bytes[bytes_index];
+                    let value = (byte & (1 << (7 - index_into_byte))) != 0;
+                    self.have[have_index] = value;
+                }
+            },
+            Message::Have(have_index) => {
+                self.have[have_index] = true;
+            }
+            _ => panic!("Need to process message: {:?}", message)
+        };
+        Ok(())
     }
 }
 
