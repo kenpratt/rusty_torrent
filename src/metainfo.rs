@@ -38,10 +38,12 @@ impl FromBencode for Metainfo {
     }
 }
 
+pub type Sha1 = Vec<u8>;
+
 #[derive(PartialEq, Debug)]
 pub struct Info {
     pub piece_length: u32,
-    pub pieces: Vec<Vec<u8>>,
+    pub pieces: Vec<Sha1>,
     pub name: String,
     pub length: u32,
 }
@@ -81,7 +83,7 @@ pub fn parse(filename: &str) -> Result<Metainfo, decoder::Error> {
     Ok(result)
 }
 
-fn calculate_sha1(input: &[u8]) -> Vec<u8> {
+fn calculate_sha1(input: &[u8]) -> Sha1 {
     let mut hasher = sha1::Sha1::new();
     hasher.update(input);
     hasher.digest()
