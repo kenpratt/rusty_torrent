@@ -1,4 +1,5 @@
 use std::{convert, io};
+use std::fmt;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 
@@ -19,7 +20,8 @@ pub fn download(info: &Metainfo, peers: &[Peer]) {
 const BLOCK_SIZE: usize = 16384;
 type Block = Vec<u8>;
 
-struct PeerConnection {
+struct PeerConnection<'a> {
+    metainfo: &'a Metainfo,
     stream: TcpStream,
     have: Vec<bool>,
     downloaded: Vec<Option<Block>>,
@@ -29,12 +31,15 @@ struct PeerConnection {
     are_they_interested: bool,
 }
 
-impl PeerConnection {
-    fn connect(peer: &Peer, metainfo: &Metainfo) -> Result<PeerConnection, Error> {
+impl<'a> PeerConnection<'a> {
+    fn connect(peer: &Peer, metainfo: &'a Metainfo) -> Result<PeerConnection<'a>, Error> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
         let num_pieces = metainfo.info.pieces.len();
+
+        println!("num_pieces = {}", num_pieces);
         let mut conn = PeerConnection {
+            metainfo: metainfo,
             stream: stream,
             have: vec![false; num_pieces],
             downloaded: vec![None; num_pieces],
@@ -118,26 +123,27 @@ impl PeerConnection {
                     let value = (byte & (1 << (7 - index_into_byte))) != 0;
                     self.have[have_index] = value;
                 };
-                self.send_interested();
+                try!(self.send_interested());
             },
             Message::Have(have_index) => {
                 self.have[have_index] = true;
-                self.send_interested();
+                try!(self.send_interested());
             },
             Message::Unchoke => {
                 if self.am_i_choked {
                     self.am_i_choked = false;
-                    let piece_index = self.next_piece_to_request();
-                    self.send_request(piece_index);
+                    try!(self.request_next_piece());
                 }
             }
             Message::Piece(index, begin, data) => {
                 self.downloaded[index] = Some(data);
+                  try!(self.request_next_piece());
             }
             _ => panic!("Need to process message: {:?}", message)
         };
         Ok(())
     }
+
     fn send_interested(&mut self) -> Result<(), Error> {
         if self.am_i_interested == false {
             let mut message = vec![];
@@ -152,11 +158,33 @@ impl PeerConnection {
         Ok(())
     }
 
-    fn next_piece_to_request(&self) -> usize {
-        0
+    fn request_next_piece(&mut self) -> Result<(), Error> {
+        match self.next_piece_to_request() {
+            Some(piece_index) => self.send_request(piece_index),
+            None => Ok(())
+        }
+    }
+
+    fn next_piece_to_request(&self) -> Option<usize> {
+        for i in 0..self.downloaded.len() {
+            if self.downloaded[i].is_none() {
+                return Some(i)
+            }
+        }
+        println!("Done!");
+        None
     }
 
     fn send_request(&mut self, piece: usize) -> Result<(), Error> {
+        println!("Sending request for {}", piece);
+        let num_pieces = self.downloaded.len();
+        let request_size = if piece == num_pieces - 1 {
+            self.metainfo.info.length as usize - (self.metainfo.info.piece_length as usize * (num_pieces - 1))
+        } else {
+            BLOCK_SIZE
+        };
+        println!("Request size: {}", request_size);
+
         let mut message = vec![];
         message.push(0);
         message.push(0);
@@ -165,13 +193,12 @@ impl PeerConnection {
         message.push(6);
         message.extend(convert_usize_to_bytes(piece).iter().cloned());
         message.extend(convert_usize_to_bytes(0).iter().cloned());
-        message.extend(convert_usize_to_bytes(BLOCK_SIZE).iter().cloned());
+        message.extend(convert_usize_to_bytes(request_size).iter().cloned());
         try!(self.stream.write_all(&message));
         Ok(())
     }
 }
 
-#[derive(Debug)]
 enum Message {
     KeepAlive,
     Choke,
@@ -205,6 +232,24 @@ impl Message {
             8 => Message::Cancel,
             9 => Message::Port,
             _ => panic!("Bad message id: {}", id)
+        }
+    }
+}
+
+impl fmt::Debug for Message {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+             Message::KeepAlive => write!(f, "KeepAlive"),
+             Message::Choke => write!(f, "Choke"),
+             Message::Unchoke => write!(f, "Unchoke"),
+             Message::Interested => write!(f, "Interested"),
+             Message::NotInterested => write!(f, "NotInterested"),
+             Message::Have(ref index) => write!(f, "Have({})", index),
+             Message::Bitfield(ref bytes) => write!(f, "Bitfield({:?})", bytes),
+             Message::Request => write!(f, "Request"),
+             Message::Piece(ref index, ref begin, ref data) => write!(f, "Piece({}, {}, size={})", index, begin, data.len()),
+             Message::Cancel => write!(f, "Cancel"),
+             Message::Port => write!(f, "Port"),
         }
     }
 }
