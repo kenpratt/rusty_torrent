@@ -19,6 +19,10 @@ pub fn download(info: &Metainfo, peers: &[Peer]) {
 struct PeerConnection {
     stream: TcpStream,
     have: Vec<bool>,
+    am_i_choked: bool,
+    am_i_interested: bool,
+    are_they_choked: bool,
+    are_they_interested: bool,
 }
 
 impl PeerConnection {
@@ -28,6 +32,10 @@ impl PeerConnection {
         let mut conn = PeerConnection {
             stream: stream,
             have:   vec![false; metainfo.info.pieces.len()],
+            am_i_choked: true,
+            am_i_interested: false,
+            are_they_choked: true,
+            are_they_interested: false,
         };
         try!(conn.handshake(&metainfo.info_hash));
         loop {
@@ -103,13 +111,33 @@ impl PeerConnection {
                     let byte = bytes[bytes_index];
                     let value = (byte & (1 << (7 - index_into_byte))) != 0;
                     self.have[have_index] = value;
-                }
+                };
+                self.send_interested();
             },
             Message::Have(have_index) => {
                 self.have[have_index] = true;
+                self.send_interested();
+            },
+            Message::Unchoke => {
+                if self.am_i_choked {
+                    self.am_i_choked = false;
+                }
             }
             _ => panic!("Need to process message: {:?}", message)
         };
+        Ok(())
+    }
+    fn send_interested(&mut self) -> Result<(), Error>{
+        if self.am_i_interested == false {
+            let mut message = vec![];
+            message.push(0);
+            message.push(0);
+            message.push(0);
+            message.push(1);
+            message.push(2);
+            try!(self.stream.write_all(&message));
+            self.am_i_interested = true;
+        }
         Ok(())
     }
 }
