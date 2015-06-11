@@ -17,10 +17,12 @@ pub fn download(info: &Metainfo, peers: &[Peer]) {
 }
 
 const BLOCK_SIZE: usize = 16384;
+type Block = Vec<u8>;
 
 struct PeerConnection {
     stream: TcpStream,
     have: Vec<bool>,
+    downloaded: Vec<Option<Block>>,
     am_i_choked: bool,
     am_i_interested: bool,
     are_they_choked: bool,
@@ -31,9 +33,11 @@ impl PeerConnection {
     fn connect(peer: &Peer, metainfo: &Metainfo) -> Result<PeerConnection, Error> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
+        let num_pieces = metainfo.info.pieces.len();
         let mut conn = PeerConnection {
             stream: stream,
-            have:   vec![false; metainfo.info.pieces.len()],
+            have: vec![false; num_pieces],
+            downloaded: vec![None; num_pieces],
             am_i_choked: true,
             am_i_interested: false,
             are_they_choked: true,
@@ -127,6 +131,9 @@ impl PeerConnection {
                     self.send_request(piece_index);
                 }
             }
+            Message::Piece(index, begin, data) => {
+                self.downloaded[index] = Some(data);
+            }
             _ => panic!("Need to process message: {:?}", message)
         };
         Ok(())
@@ -174,7 +181,7 @@ enum Message {
     Have(usize),
     Bitfield(Vec<u8>),
     Request, // TODO add params
-    Piece,   // TODO add params
+    Piece(usize, usize, Block),
     Cancel,  // TODO add params
     Port,    // TODO add params
 }
@@ -189,7 +196,12 @@ impl Message {
             4 => Message::Have(convert_big_endian_to_integer(body)),
             5 => Message::Bitfield(body.to_owned()),
             6 => Message::Request,
-            7 => Message::Piece,
+            7 => {
+                let index = convert_big_endian_to_integer(&body[0..4]);
+                let begin = convert_big_endian_to_integer(&body[4..8]);
+                let data = body[8..].to_owned();
+                Message::Piece(index, begin, data)
+            },
             8 => Message::Cancel,
             9 => Message::Port,
             _ => panic!("Bad message id: {}", id)
