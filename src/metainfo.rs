@@ -71,6 +71,8 @@ impl FromBencode for Info {
 }
 
 pub fn parse(filename: &str) -> Result<Metainfo, decoder::Error> {
+    println!("Loading {}", filename);
+
     // read the torrent file into a byte vector
     let mut f = try!(File::open(filename));
     let mut v = Vec::new();

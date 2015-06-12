@@ -7,15 +7,23 @@ mod metainfo;
 mod tracker;
 mod tracker_response;
 
+use std::env;
+
 fn main() {
-    match run() {
+    // parse command-line arguments
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        println!("Usage: rusty_torrent path/to/myfile.torrent")
+    }
+    let filename = &args[1];
+
+    match run(filename) {
         Ok(_)  => println!("Yay, it worked!"),
         Err(e) => println!("Oops, it failed: {:?}", e)
     }
 }
 
-fn run() -> Result<(), tracker::Error> {
-    let filename = "test_data/flagfromserver.torrent";
+fn run(filename: &str) -> Result<(), tracker::Error> {
     let metainfo = try!(metainfo::parse(filename));
     let peers = try!(tracker::get_peers(&metainfo));
     download::download(&metainfo, &peers);
