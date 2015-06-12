@@ -11,7 +11,7 @@ use decoder;
 use metainfo::Metainfo;
 use tracker_response::{Peer, TrackerResponse};
 
-pub fn get_peers(metainfo: &Metainfo) ->Result<Vec<Peer>, Error> {
+pub fn get_peers(peer_id: &str, metainfo: &Metainfo) ->Result<Vec<Peer>, Error> {
     let length_string = metainfo.info.length.to_string();
     let encoded_info_hash = percent_encode(&metainfo.info_hash, FORM_URLENCODED_ENCODE_SET);
     let params = vec![("left", length_string.as_ref()),
@@ -19,7 +19,7 @@ pub fn get_peers(metainfo: &Metainfo) ->Result<Vec<Peer>, Error> {
                       ("downloaded", "0"),
                       ("uploaded", "0"),
                       ("event", "started"),
-                      ("peer_id", "-TZ-0000-00000000001"),
+                      ("peer_id", peer_id),
                       ("port", "6881")];
     let url = format!("{}?{}", metainfo.announce, encode_query_params(&params));
 

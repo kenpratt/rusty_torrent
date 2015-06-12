@@ -10,11 +10,12 @@ use tracker_response::Peer;
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
 
-pub fn connect<'a>(peer: &Peer, metainfo: &'a Metainfo) -> Result<PeerConnection<'a>, Error> {
-    PeerConnection::connect(peer, metainfo)
+pub fn connect<'a>(our_peer_id: &'a str, peer: &Peer, metainfo: &'a Metainfo) -> Result<PeerConnection<'a>, Error> {
+    PeerConnection::connect(our_peer_id, peer, metainfo)
 }
 
 pub struct PeerConnection<'a> {
+    our_peer_id: &'a str,
     metainfo: &'a Metainfo,
     stream: TcpStream,
     have: Vec<bool>,
@@ -26,12 +27,13 @@ pub struct PeerConnection<'a> {
 }
 
 impl<'a> PeerConnection<'a> {
-    fn connect(peer: &Peer, metainfo: &'a Metainfo) -> Result<PeerConnection<'a>, Error> {
+    fn connect(our_peer_id: &'a str, peer: &Peer, metainfo: &'a Metainfo) -> Result<PeerConnection<'a>, Error> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
         let num_pieces = metainfo.info.num_pieces;
         let download = try!(Download::new(metainfo));
         let mut conn = PeerConnection {
+            our_peer_id: our_peer_id,
             metainfo: metainfo,
             stream: stream,
             have: vec![false; num_pieces as usize],
@@ -64,7 +66,7 @@ impl<'a> PeerConnection<'a> {
         message.extend(PROTOCOL.bytes());
         message.extend(vec![0; 8].into_iter());
         message.extend(self.metainfo.info_hash.iter().cloned());
-        message.extend("-TZ-0000-00000000001".bytes());
+        message.extend(self.our_peer_id.bytes());
         try!(self.stream.write_all(&message));
         Ok(())
     }
