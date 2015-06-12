@@ -1,5 +1,3 @@
-extern crate sha1;
-
 use bencode;
 use bencode::{Bencode, FromBencode};
 use bencode::util::ByteString;
@@ -7,6 +5,7 @@ use std::fs::File;
 use std::io::Read;
 
 use decoder;
+use hash::{calculate_sha1, Sha1};
 
 #[derive(PartialEq, Debug)]
 pub struct Metainfo {
@@ -37,8 +36,6 @@ impl FromBencode for Metainfo {
         }
     }
 }
-
-pub type Sha1 = Vec<u8>;
 
 #[derive(PartialEq, Debug)]
 pub struct Info {
@@ -84,10 +81,4 @@ pub fn parse(filename: &str) -> Result<Metainfo, decoder::Error> {
     let result = try!(FromBencode::from_bencode(&bencode));
 
     Ok(result)
-}
-
-fn calculate_sha1(input: &[u8]) -> Sha1 {
-    let mut hasher = sha1::Sha1::new();
-    hasher.update(input);
-    hasher.digest()
 }

@@ -3,7 +3,8 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 
-use metainfo::{Metainfo, Sha1};
+use hash::Sha1;
+use metainfo::Metainfo;
 use tracker_response::Peer;
 
 pub fn download(info: &Metainfo, peers: &[Peer]) {

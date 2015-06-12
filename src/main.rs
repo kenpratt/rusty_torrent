@@ -1,10 +1,11 @@
 extern crate bencode;
 
 mod decoder;
+mod download;
+mod hash;
 mod metainfo;
 mod tracker;
 mod tracker_response;
-mod download;
 
 fn main() {
     match run() {
