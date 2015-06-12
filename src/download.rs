@@ -18,7 +18,7 @@ pub fn download(info: &Metainfo, peers: &[Peer]) {
 }
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
-const BLOCK_SIZE: usize = 16384;
+const BLOCK_SIZE: u32 = 16384;
 type Block = Vec<u8>;
 
 struct PeerConnection<'a> {
@@ -75,7 +75,7 @@ impl<'a> PeerConnection<'a> {
 
     fn receive_handshake(&mut self) -> Result<(), Error> {
         let pstrlen = try!(self.read_n(1));
-        let pstr = try!(self.read_n(pstrlen[0] as usize));
+        let pstr = try!(self.read_n(pstrlen[0] as u32));
         let reserved = try!(self.read_n(8));
         let info_hash = try!(self.read_n(20));
         let peer_id = try!(self.read_n(20));
@@ -89,7 +89,7 @@ impl<'a> PeerConnection<'a> {
     }
 
     fn receive_message(&mut self) -> Result<Message, Error> {
-        let message_size = bytes_to_usize(&try!(self.read_n(4)));
+        let message_size = bytes_to_u32(&try!(self.read_n(4)));
         if message_size > 0 {
             let message = try!(self.read_n(message_size));
             Ok(Message::new(&message[0], &message[1..]))
@@ -98,11 +98,11 @@ impl<'a> PeerConnection<'a> {
         }
     }
 
-    fn read_n(&mut self, bytes_to_read: usize) -> Result<Vec<u8>, Error> {
+    fn read_n(&mut self, bytes_to_read: u32) -> Result<Vec<u8>, Error> {
         let mut buf = vec![];
         let bytes_read = (&mut self.stream).take(bytes_to_read as u64).read_to_end(&mut buf);
         match bytes_read {
-            Ok(n) if n == bytes_to_read  => Ok(buf),
+            Ok(n) if n == bytes_to_read as usize => Ok(buf),
             Ok(_)  => Err(Error::NotEnoughData),
             Err(e) => try!(Err(e))
         }
@@ -122,7 +122,7 @@ impl<'a> PeerConnection<'a> {
                 try!(self.send_interested());
             },
             Message::Have(have_index) => {
-                self.have[have_index] = true;
+                self.have[have_index as usize] = true;
                 try!(self.send_interested());
             },
             Message::Unchoke => {
@@ -132,7 +132,7 @@ impl<'a> PeerConnection<'a> {
                 }
             }
             Message::Piece(index, begin, data) => {
-                self.downloaded[index] = Some(data);
+                self.downloaded[index as usize] = Some(data);
                 try!(self.request_next_piece());
             }
             _ => panic!("Need to process message: {:?}", message)
@@ -155,20 +155,20 @@ impl<'a> PeerConnection<'a> {
         }
     }
 
-    fn next_piece_to_request(&self) -> Option<usize> {
+    fn next_piece_to_request(&self) -> Option<u32> {
         for i in 0..self.downloaded.len() {
             if self.downloaded[i].is_none() {
-                return Some(i)
+                return Some(i as u32)
             }
         }
         println!("Done downloading file!");
         None
     }
 
-    fn send_request(&mut self, piece: usize) -> Result<(), Error> {
-        let num_pieces = self.downloaded.len();
+    fn send_request(&mut self, piece: u32) -> Result<(), Error> {
+        let num_pieces = self.downloaded.len() as u32;
         let request_size = if piece == num_pieces - 1 {
-            self.metainfo.info.length as usize - (self.metainfo.info.piece_length as usize * (num_pieces - 1))
+            self.metainfo.info.length - (self.metainfo.info.piece_length * (num_pieces - 1))
         } else {
             BLOCK_SIZE
         };
@@ -182,10 +182,10 @@ enum Message {
     Unchoke,
     Interested,
     NotInterested,
-    Have(usize),
+    Have(u32),
     Bitfield(Vec<u8>),
-    Request(usize, usize, usize),
-    Piece(usize, usize, Block),
+    Request(u32, u32, u32),
+    Piece(u32, u32, Block),
     Cancel,  // TODO add params
     Port,    // TODO add params
 }
@@ -197,17 +197,17 @@ impl Message {
             1 => Message::Unchoke,
             2 => Message::Interested,
             3 => Message::NotInterested,
-            4 => Message::Have(bytes_to_usize(body)),
+            4 => Message::Have(bytes_to_u32(body)),
             5 => Message::Bitfield(body.to_owned()),
             6 => {
-                let index = bytes_to_usize(&body[0..4]);
-                let begin = bytes_to_usize(&body[4..8]);
-                let offset = bytes_to_usize(&body[8..12]);
+                let index = bytes_to_u32(&body[0..4]);
+                let begin = bytes_to_u32(&body[4..8]);
+                let offset = bytes_to_u32(&body[8..12]);
                 Message::Request(index, begin, offset)
             },
             7 => {
-                let index = bytes_to_usize(&body[0..4]);
-                let begin = bytes_to_usize(&body[4..8]);
+                let index = bytes_to_u32(&body[0..4]);
+                let begin = bytes_to_u32(&body[4..8]);
                 let data = body[8..].to_owned();
                 Message::Piece(index, begin, data)
             },
@@ -227,7 +227,7 @@ impl Message {
             Message::NotInterested => payload.push(3),
             Message::Have(index) => {
                 payload.push(4);
-                payload.extend(usize_to_bytes(index).into_iter());
+                payload.extend(u32_to_bytes(index).into_iter());
             },
             Message::Bitfield(bytes) => {
                 payload.push(5);
@@ -235,14 +235,14 @@ impl Message {
             },
             Message::Request(index, begin, amount) => {
                 payload.push(6);
-                payload.extend(usize_to_bytes(index).into_iter());
-                payload.extend(usize_to_bytes(begin).into_iter());
-                payload.extend(usize_to_bytes(amount).into_iter());
+                payload.extend(u32_to_bytes(index).into_iter());
+                payload.extend(u32_to_bytes(begin).into_iter());
+                payload.extend(u32_to_bytes(amount).into_iter());
             },
             Message::Piece(index, begin, data) => {
                 payload.push(6);
-                payload.extend(usize_to_bytes(index).into_iter());
-                payload.extend(usize_to_bytes(begin).into_iter());
+                payload.extend(u32_to_bytes(index).into_iter());
+                payload.extend(u32_to_bytes(begin).into_iter());
                 payload.extend(data);
             },
             Message::Cancel => payload.push(8),
@@ -250,7 +250,7 @@ impl Message {
         };
 
         // prepend size
-        let mut size = usize_to_bytes(payload.len());
+        let mut size = u32_to_bytes(payload.len() as u32);
         size.extend(payload);
         size
     }
@@ -274,19 +274,19 @@ impl fmt::Debug for Message {
     }
 }
 
-const BYTE_0: usize = 256 * 256 * 256;
-const BYTE_1: usize = 256 * 256;
-const BYTE_2: usize = 256;
-const BYTE_3: usize = 1;
+const BYTE_0: u32 = 256 * 256 * 256;
+const BYTE_1: u32 = 256 * 256;
+const BYTE_2: u32 = 256;
+const BYTE_3: u32 = 1;
 
-fn bytes_to_usize(bytes: &[u8]) -> usize {
-    bytes[0] as usize * BYTE_0 +
-    bytes[1] as usize * BYTE_1 +
-    bytes[2] as usize * BYTE_2 +
-    bytes[3] as usize * BYTE_3
+fn bytes_to_u32(bytes: &[u8]) -> u32 {
+    bytes[0] as u32 * BYTE_0 +
+    bytes[1] as u32 * BYTE_1 +
+    bytes[2] as u32 * BYTE_2 +
+    bytes[3] as u32 * BYTE_3
 }
 
-fn usize_to_bytes(integer: usize) -> Vec<u8> {
+fn u32_to_bytes(integer: u32) -> Vec<u8> {
     let mut rest = integer;
     let first = rest / BYTE_0;
     rest -= first * BYTE_0;
