@@ -131,7 +131,7 @@ impl<'a> PeerConnection<'a> {
                     try!(self.request_next_piece());
                 }
             }
-            Message::Piece(index, begin, data) => {
+            Message::Piece(index, offset, data) => {
                 self.downloaded[index as usize] = Some(data);
                 try!(self.request_next_piece());
             }
@@ -201,15 +201,15 @@ impl Message {
             5 => Message::Bitfield(body.to_owned()),
             6 => {
                 let index = bytes_to_u32(&body[0..4]);
-                let begin = bytes_to_u32(&body[4..8]);
-                let offset = bytes_to_u32(&body[8..12]);
-                Message::Request(index, begin, offset)
+                let offset = bytes_to_u32(&body[4..8]);
+                let length = bytes_to_u32(&body[8..12]);
+                Message::Request(index, offset, length)
             },
             7 => {
                 let index = bytes_to_u32(&body[0..4]);
-                let begin = bytes_to_u32(&body[4..8]);
+                let offset = bytes_to_u32(&body[4..8]);
                 let data = body[8..].to_owned();
-                Message::Piece(index, begin, data)
+                Message::Piece(index, offset, data)
             },
             8 => Message::Cancel,
             9 => Message::Port,
@@ -233,16 +233,16 @@ impl Message {
                 payload.push(5);
                 payload.extend(bytes);
             },
-            Message::Request(index, begin, amount) => {
+            Message::Request(index, offset, amount) => {
                 payload.push(6);
                 payload.extend(u32_to_bytes(index).into_iter());
-                payload.extend(u32_to_bytes(begin).into_iter());
+                payload.extend(u32_to_bytes(offset).into_iter());
                 payload.extend(u32_to_bytes(amount).into_iter());
             },
-            Message::Piece(index, begin, data) => {
+            Message::Piece(index, offset, data) => {
                 payload.push(6);
                 payload.extend(u32_to_bytes(index).into_iter());
-                payload.extend(u32_to_bytes(begin).into_iter());
+                payload.extend(u32_to_bytes(offset).into_iter());
                 payload.extend(data);
             },
             Message::Cancel => payload.push(8),
@@ -266,8 +266,8 @@ impl fmt::Debug for Message {
              Message::NotInterested => write!(f, "NotInterested"),
              Message::Have(ref index) => write!(f, "Have({})", index),
              Message::Bitfield(ref bytes) => write!(f, "Bitfield({:?})", bytes),
-             Message::Request(ref index, ref begin, ref offset) => write!(f, "Request({}, {}, {})", index, begin, offset),
-             Message::Piece(ref index, ref begin, ref data) => write!(f, "Piece({}, {}, size={})", index, begin, data.len()),
+             Message::Request(ref index, ref offset, ref length) => write!(f, "Request({}, {}, {})", index, offset, length),
+             Message::Piece(ref index, ref offset, ref data) => write!(f, "Piece({}, {}, size={})", index, offset, data.len()),
              Message::Cancel => write!(f, "Cancel"),
              Message::Port => write!(f, "Port"),
         }
