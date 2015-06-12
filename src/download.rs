@@ -31,7 +31,7 @@ impl<'a> Download<'a> {
         }
 
         // create file
-        let mut file = try!(File::create(&metainfo.info.name));
+        let file = try!(File::create(&metainfo.info.name));
         try!(file.set_len(metainfo.info.length));
 
         Ok(Download {
@@ -41,10 +41,12 @@ impl<'a> Download<'a> {
         })
     }
 
-    pub fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
-        let piece = &mut self.pieces[piece_index as usize];
-        piece.store(&mut self.file, block_index, data)
-        // TODO Detect if file is complete
+    pub fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<bool, Error> {
+        {
+            let piece = &mut self.pieces[piece_index as usize];
+            try!(piece.store(&mut self.file, block_index, data));
+        }
+        Ok(self.is_complete())
     }
 
     pub fn next_block_to_request(&self, peer_has_pieces: &[bool]) -> Option<(u32, u32, u32)> {
@@ -59,6 +61,15 @@ impl<'a> Download<'a> {
             }
         }
         None
+    }
+
+    fn is_complete(&self) -> bool {
+        for piece in self.pieces.iter() {
+            if !piece.is_complete {
+                return false
+            }
+        }
+        true
     }
 }
 

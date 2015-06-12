@@ -42,16 +42,18 @@ impl<'a> PeerConnection<'a> {
             are_they_interested: false,
         };
         try!(conn.run());
+        println!("Disconnecting from {}:{}", peer.ip, peer.port);
         Ok(conn)
     }
 
     fn run(&mut self) -> Result<(), Error> {
         try!(self.send_handshake());
         try!(self.receive_handshake());
-        loop {
+        let mut is_complete = false;
+        while !is_complete {
             let message = try!(self.receive_message());
             println!("Recieved: {:?}", message);
-            try!(self.process(message));
+            is_complete = try!(self.process(message));
         }
         Ok(())
     }
@@ -102,7 +104,7 @@ impl<'a> PeerConnection<'a> {
         }
     }
 
-    fn process(&mut self, message: Message) -> Result<(), Error>{
+    fn process(&mut self, message: Message) -> Result<bool, Error>{
         match message {
             Message::KeepAlive => {},
             Message::Bitfield(bytes) => {
@@ -127,12 +129,16 @@ impl<'a> PeerConnection<'a> {
             }
             Message::Piece(piece_index, offset, data) => {
                 let block_index = offset / BLOCK_SIZE;
-                try!(self.download.store(piece_index, block_index, data));
-                try!(self.request_next_block());
+                let is_complete = try!(self.download.store(piece_index, block_index, data));
+                if is_complete {
+                    return Ok(true)
+                } else {
+                    try!(self.request_next_block());
+                }
             }
             _ => panic!("Need to process message: {:?}", message)
         };
-        Ok(())
+        Ok(false)
     }
 
     fn send_interested(&mut self) -> Result<(), Error> {
