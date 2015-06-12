@@ -84,6 +84,11 @@ impl<'a> PeerConnection<'a> {
         Ok(())
     }
 
+    fn send_message(&mut self, message: Message) -> Result<(), Error> {
+        try!(self.stream.write_all(&message.encode()));
+        Ok(())
+    }
+
     fn receive_message(&mut self) -> Result<Message, Error> {
         let message_size = convert_big_endian_to_integer(&try!(self.read_n(4)));
         if message_size > 0 {
@@ -131,7 +136,7 @@ impl<'a> PeerConnection<'a> {
             }
             Message::Piece(index, begin, data) => {
                 self.downloaded[index] = Some(data);
-                  try!(self.request_next_piece());
+                try!(self.request_next_piece());
             }
             _ => panic!("Need to process message: {:?}", message)
         };
@@ -140,14 +145,8 @@ impl<'a> PeerConnection<'a> {
 
     fn send_interested(&mut self) -> Result<(), Error> {
         if self.am_i_interested == false {
-            let mut message = vec![];
-            message.push(0);
-            message.push(0);
-            message.push(0);
-            message.push(1);
-            message.push(2);
-            try!(self.stream.write_all(&message));
             self.am_i_interested = true;
+            try!(self.send_message(Message::Interested));
         }
         Ok(())
     }
@@ -178,18 +177,7 @@ impl<'a> PeerConnection<'a> {
             BLOCK_SIZE
         };
         println!("Request size: {}", request_size);
-
-        let mut message = vec![];
-        message.push(0);
-        message.push(0);
-        message.push(0);
-        message.push(13);
-        message.push(6);
-        message.extend(convert_usize_to_bytes(piece).iter().cloned());
-        message.extend(convert_usize_to_bytes(0).iter().cloned());
-        message.extend(convert_usize_to_bytes(request_size).iter().cloned());
-        try!(self.stream.write_all(&message));
-        Ok(())
+        self.send_message(Message::Request(piece, 0, request_size))
     }
 }
 
@@ -201,7 +189,7 @@ enum Message {
     NotInterested,
     Have(usize),
     Bitfield(Vec<u8>),
-    Request, // TODO add params
+    Request(usize, usize, usize),
     Piece(usize, usize, Block),
     Cancel,  // TODO add params
     Port,    // TODO add params
@@ -216,7 +204,12 @@ impl Message {
             3 => Message::NotInterested,
             4 => Message::Have(convert_big_endian_to_integer(body)),
             5 => Message::Bitfield(body.to_owned()),
-            6 => Message::Request,
+            6 => {
+                let index = convert_big_endian_to_integer(&body[0..4]);
+                let begin = convert_big_endian_to_integer(&body[4..8]);
+                let offset = convert_big_endian_to_integer(&body[8..12]);
+                Message::Request(index, begin, offset)
+            },
             7 => {
                 let index = convert_big_endian_to_integer(&body[0..4]);
                 let begin = convert_big_endian_to_integer(&body[4..8]);
@@ -227,6 +220,44 @@ impl Message {
             9 => Message::Port,
             _ => panic!("Bad message id: {}", id)
         }
+    }
+
+    fn encode(self) -> Vec<u8> {
+        let mut payload = vec![];
+        match self {
+            Message::KeepAlive => {},
+            Message::Choke => payload.push(0),
+            Message::Unchoke => payload.push(1),
+            Message::Interested => payload.push(2),
+            Message::NotInterested => payload.push(3),
+            Message::Have(index) => {
+                payload.push(4);
+                payload.extend(convert_usize_to_bytes(index).iter().cloned());
+            },
+            Message::Bitfield(bytes) => {
+                payload.push(5);
+                payload.extend(bytes);
+            },
+            Message::Request(index, begin, amount) => {
+                payload.push(6);
+                payload.extend(convert_usize_to_bytes(index).iter().cloned());
+                payload.extend(convert_usize_to_bytes(begin).iter().cloned());
+                payload.extend(convert_usize_to_bytes(amount).iter().cloned());
+            },
+            Message::Piece(index, begin, data) => {
+                payload.push(6);
+                payload.extend(convert_usize_to_bytes(index).iter().cloned());
+                payload.extend(convert_usize_to_bytes(begin).iter().cloned());
+                payload.extend(data);
+            },
+            Message::Cancel => payload.push(8),
+            Message::Port => payload.push(9),
+        };
+
+        // prepend size
+        let mut size = convert_usize_to_bytes(payload.len());
+        size.extend(payload);
+        size
     }
 }
 
@@ -240,7 +271,7 @@ impl fmt::Debug for Message {
              Message::NotInterested => write!(f, "NotInterested"),
              Message::Have(ref index) => write!(f, "Have({})", index),
              Message::Bitfield(ref bytes) => write!(f, "Bitfield({:?})", bytes),
-             Message::Request => write!(f, "Request"),
+             Message::Request(ref index, ref begin, ref offset) => write!(f, "Request({}, {}, {})", index, begin, offset),
              Message::Piece(ref index, ref begin, ref data) => write!(f, "Piece({}, {}, size={})", index, begin, data.len()),
              Message::Cancel => write!(f, "Cancel"),
              Message::Port => write!(f, "Port"),
