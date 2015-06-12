@@ -18,8 +18,8 @@ fn main() {
     let filename = &args[1];
 
     match run(filename) {
-        Ok(_)  => println!("Yay, it worked!"),
-        Err(e) => println!("Oops, it failed: {:?}", e)
+        Ok(_) => {},
+        Err(e) => println!("Error: {:?}", e)
     }
 }
 
