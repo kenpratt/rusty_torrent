@@ -17,6 +17,7 @@ pub fn download(info: &Metainfo, peers: &[Peer]) {
     }
 }
 
+const PROTOCOL: &'static str = "BitTorrent protocol";
 const BLOCK_SIZE: usize = 16384;
 type Block = Vec<u8>;
 
@@ -65,16 +66,9 @@ impl<'a> PeerConnection<'a> {
 
     fn send_handshake(&mut self, info_hash: &[u8]) -> Result<(), Error> {
         let mut message = vec![];
-        message.push(19);
-        message.extend("BitTorrent protocol".as_bytes().iter().cloned());
-        message.push(0);
-        message.push(0);
-        message.push(0);
-        message.push(0);
-        message.push(0);
-        message.push(0);
-        message.push(0);
-        message.push(0);
+        message.push(PROTOCOL.len() as u8);
+        message.extend(PROTOCOL.as_bytes().iter().cloned());
+        message.extend((&[0; 8]).iter().cloned());
         message.extend(info_hash.iter().cloned());
         message.extend("-TZ-0000-00000000001".as_bytes().iter().cloned());
         try!(self.stream.write_all(&message));
