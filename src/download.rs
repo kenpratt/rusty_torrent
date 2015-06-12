@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 
-use hash::Sha1;
+use hash::{calculate_sha1, Sha1};
 use metainfo::Metainfo;
 use tracker_response::Peer;
 
@@ -52,6 +52,7 @@ impl<'a> Download<'a> {
     fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
         let piece = &mut self.pieces[piece_index as usize];
         piece.store(block_index, data)
+        // TODO Detect if file is complete
     }
 
     fn next_block_to_request(&self, peer_has_pieces: &[bool]) -> Option<(u32, u32, u32)> {
@@ -99,8 +100,22 @@ impl Piece {
     }
 
     fn store(&mut self, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
-        let block = &mut self.blocks[block_index as usize];
-        block.data = Some(data);
+        {
+            let block = &mut self.blocks[block_index as usize];
+            block.data = Some(data);
+        }
+
+        if self.is_complete() {
+            if self.is_correct() {
+                println!("Piece {} is complete and correct", self.index);
+                // TODO Save to file
+            } else {
+                println!("Piece is corrupt, deleting downloaded piece data!");
+                for block in self.blocks.iter_mut() {
+                    block.data = None;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -111,6 +126,25 @@ impl Piece {
             }
         }
         None
+    }
+
+    fn is_complete(&self) -> bool {
+        for block in self.blocks.iter() {
+            if block.data.is_none() {
+                return false
+            }
+        }
+        true
+    }
+
+    fn is_correct(&self) -> bool {
+        let mut data = vec![];
+        for block in self.blocks.iter() {
+            data.extend(block.data.clone().unwrap());
+        }
+
+        let hash = calculate_sha1(&data);
+        self.hash == hash
     }
 }
 
@@ -265,7 +299,7 @@ impl<'a> PeerConnection<'a> {
                 self.send_message(Message::Request(piece_index, offset, block_length))
             },
             None => {
-                println!("Download complete!");
+                println!("We've downloaded all the pieces we can from this peer.");
                 Ok(())
             }
         }
@@ -282,8 +316,8 @@ enum Message {
     Bitfield(Vec<u8>),
     Request(u32, u32, u32),
     Piece(u32, u32, Vec<u8>),
-    Cancel,  // TODO add params
-    Port,    // TODO add params
+    Cancel,  // TODO Add params
+    Port,    // TODO Add params
 }
 
 impl Message {
