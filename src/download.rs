@@ -168,7 +168,7 @@ impl<'a> PeerConnection<'a> {
     fn send_request(&mut self, piece: u32) -> Result<(), Error> {
         let num_pieces = self.downloaded.len() as u32;
         let request_size = if piece == num_pieces - 1 {
-            self.metainfo.info.length - (self.metainfo.info.piece_length * (num_pieces - 1))
+            (self.metainfo.info.length - (self.metainfo.info.piece_length as u64 * (num_pieces as u64 - 1))) as u32
         } else {
             BLOCK_SIZE
         };
