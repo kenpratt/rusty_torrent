@@ -1,6 +1,7 @@
 use std::{convert, io};
 use std::fmt;
-use std::io::{Read, Write};
+use std::fs::File;
+use std::io::{Read, Seek, Write};
 use std::net::{Ipv4Addr, TcpStream};
 
 use hash::{calculate_sha1, Sha1};
@@ -24,10 +25,11 @@ const BLOCK_SIZE: u32 = 16384;
 struct Download<'a> {
     metainfo: &'a Metainfo,
     pieces:   Vec<Piece>,
+    file:     File,
 }
 
 impl<'a> Download<'a> {
-    fn new(metainfo: &Metainfo) -> Download {
+    fn new(metainfo: &Metainfo) -> Result<Download, Error> {
         let file_length = metainfo.info.length;
         let piece_length = metainfo.info.piece_length;
         let num_pieces = metainfo.info.num_pieces;
@@ -40,18 +42,23 @@ impl<'a> Download<'a> {
             } else {
                 (file_length - (piece_length as u64 * (num_pieces as u64 - 1))) as u32
             };
-            pieces.push(Piece::new(i, len, metainfo.info.pieces[i as usize].clone()));
+            pieces.push(Piece::new(i, len, piece_length, metainfo.info.pieces[i as usize].clone()));
         }
 
-        Download {
+        // create file
+        let mut file = try!(File::create(&metainfo.info.name));
+        try!(file.set_len(metainfo.info.length));
+
+        Ok(Download {
             metainfo: metainfo,
             pieces:   pieces,
-        }
+            file:     file,
+        })
     }
 
     fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
         let piece = &mut self.pieces[piece_index as usize];
-        piece.store(block_index, data)
+        piece.store(&mut self.file, block_index, data)
         // TODO Detect if file is complete
     }
 
@@ -73,12 +80,13 @@ impl<'a> Download<'a> {
 struct Piece {
     index:  u32,
     length: u32,
+    piece_length: u32,
     hash:   Sha1,
     blocks: Vec<Block>,
 }
 
 impl Piece {
-    fn new(index: u32, length: u32, hash: Sha1) -> Piece {
+    fn new(index: u32, length: u32, piece_length: u32, hash: Sha1) -> Piece {
         // create blocks
         let mut blocks = vec![];
         let num_blocks = (length as f64 / BLOCK_SIZE as f64).ceil() as u32;
@@ -94,21 +102,32 @@ impl Piece {
         Piece {
             index:  index,
             length: length,
+            piece_length: piece_length,
             hash:   hash,
             blocks: blocks,
         }
     }
 
-    fn store(&mut self, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
+    fn store(&mut self, file: &mut File, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
         {
             let block = &mut self.blocks[block_index as usize];
             block.data = Some(data);
         }
 
         if self.is_complete() {
-            if self.is_correct() {
+            // concatenate data from blocks together
+            let mut data = vec![];
+            for block in self.blocks.iter() {
+                data.extend(block.data.clone().unwrap());
+            }
+
+            // validate that piece data matches SHA1 hash
+            if self.hash == calculate_sha1(&data) {
                 println!("Piece {} is complete and correct", self.index);
-                // TODO Save to file
+                let offset = self.index as u64 * self.piece_length as u64;
+                println!("Writing {} bytes to file at offset {}", data.len(), offset);
+                try!(file.seek(io::SeekFrom::Start(offset)));
+                try!(file.write_all(&data));
             } else {
                 println!("Piece is corrupt, deleting downloaded piece data!");
                 for block in self.blocks.iter_mut() {
@@ -135,16 +154,6 @@ impl Piece {
             }
         }
         true
-    }
-
-    fn is_correct(&self) -> bool {
-        let mut data = vec![];
-        for block in self.blocks.iter() {
-            data.extend(block.data.clone().unwrap());
-        }
-
-        let hash = calculate_sha1(&data);
-        self.hash == hash
     }
 }
 
@@ -180,11 +189,12 @@ impl<'a> PeerConnection<'a> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
         let num_pieces = metainfo.info.num_pieces;
+        let download = try!(Download::new(metainfo));
         let mut conn = PeerConnection {
             metainfo: metainfo,
             stream: stream,
             have: vec![false; num_pieces as usize],
-            download: Download::new(metainfo),
+            download: download,
             am_i_choked: true,
             am_i_interested: false,
             are_they_choked: true,
