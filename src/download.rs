@@ -37,8 +37,6 @@ impl<'a> PeerConnection<'a> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
         let num_pieces = metainfo.info.pieces.len();
-
-        println!("num_pieces = {}", num_pieces);
         let mut conn = PeerConnection {
             metainfo: metainfo,
             stream: stream,
@@ -52,7 +50,7 @@ impl<'a> PeerConnection<'a> {
         try!(conn.handshake(&metainfo.info_hash));
         loop {
             let message = try!(conn.receive_message());
-            println!("{:?}", message);
+            println!("Recieved: {:?}", message);
             try!(conn.process(message));
         }
         Ok(conn)
@@ -85,6 +83,7 @@ impl<'a> PeerConnection<'a> {
     }
 
     fn send_message(&mut self, message: Message) -> Result<(), Error> {
+        println!("Sending: {:?}", message);
         try!(self.stream.write_all(&message.encode()));
         Ok(())
     }
@@ -93,9 +92,7 @@ impl<'a> PeerConnection<'a> {
         let message_size = convert_big_endian_to_integer(&try!(self.read_n(4)));
         if message_size > 0 {
             let message = try!(self.read_n(message_size));
-            let message_id = &message[0];
-            let message_body = &message[1..];
-            Ok(Message::new(message_id, message_body))
+            Ok(Message::new(&message[0], &message[1..]))
         } else {
             Ok(Message::KeepAlive)
         }
@@ -164,19 +161,17 @@ impl<'a> PeerConnection<'a> {
                 return Some(i)
             }
         }
-        println!("Done!");
+        println!("Done downloading file!");
         None
     }
 
     fn send_request(&mut self, piece: usize) -> Result<(), Error> {
-        println!("Sending request for {}", piece);
         let num_pieces = self.downloaded.len();
         let request_size = if piece == num_pieces - 1 {
             self.metainfo.info.length as usize - (self.metainfo.info.piece_length as usize * (num_pieces - 1))
         } else {
             BLOCK_SIZE
         };
-        println!("Request size: {}", request_size);
         self.send_message(Message::Request(piece, 0, request_size))
     }
 }
