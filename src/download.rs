@@ -47,28 +47,28 @@ impl<'a> PeerConnection<'a> {
             are_they_choked: true,
             are_they_interested: false,
         };
-        try!(conn.handshake(&metainfo.info_hash));
-        loop {
-            let message = try!(conn.receive_message());
-            println!("Recieved: {:?}", message);
-            try!(conn.process(message));
-        }
+        try!(conn.run());
         Ok(conn)
     }
 
-    fn handshake(&mut self, info_hash: &[u8]) -> Result<(), Error> {
-        try!(self.send_handshake(info_hash));
+    fn run(&mut self) -> Result<(), Error> {
+        try!(self.send_handshake());
         try!(self.receive_handshake());
+        loop {
+            let message = try!(self.receive_message());
+            println!("Recieved: {:?}", message);
+            try!(self.process(message));
+        }
         Ok(())
     }
 
-    fn send_handshake(&mut self, info_hash: &[u8]) -> Result<(), Error> {
+    fn send_handshake(&mut self) -> Result<(), Error> {
         let mut message = vec![];
         message.push(PROTOCOL.len() as u8);
-        message.extend(PROTOCOL.as_bytes().iter().cloned());
-        message.extend((&[0; 8]).iter().cloned());
-        message.extend(info_hash.iter().cloned());
-        message.extend("-TZ-0000-00000000001".as_bytes().iter().cloned());
+        message.extend(PROTOCOL.bytes());
+        message.extend(vec![0; 8].into_iter());
+        message.extend(self.metainfo.info_hash.iter().cloned());
+        message.extend("-TZ-0000-00000000001".bytes());
         try!(self.stream.write_all(&message));
         Ok(())
     }
@@ -84,12 +84,12 @@ impl<'a> PeerConnection<'a> {
 
     fn send_message(&mut self, message: Message) -> Result<(), Error> {
         println!("Sending: {:?}", message);
-        try!(self.stream.write_all(&message.encode()));
+        try!(self.stream.write_all(&message.serialize()));
         Ok(())
     }
 
     fn receive_message(&mut self) -> Result<Message, Error> {
-        let message_size = convert_big_endian_to_integer(&try!(self.read_n(4)));
+        let message_size = bytes_to_usize(&try!(self.read_n(4)));
         if message_size > 0 {
             let message = try!(self.read_n(message_size));
             Ok(Message::new(&message[0], &message[1..]))
@@ -197,17 +197,17 @@ impl Message {
             1 => Message::Unchoke,
             2 => Message::Interested,
             3 => Message::NotInterested,
-            4 => Message::Have(convert_big_endian_to_integer(body)),
+            4 => Message::Have(bytes_to_usize(body)),
             5 => Message::Bitfield(body.to_owned()),
             6 => {
-                let index = convert_big_endian_to_integer(&body[0..4]);
-                let begin = convert_big_endian_to_integer(&body[4..8]);
-                let offset = convert_big_endian_to_integer(&body[8..12]);
+                let index = bytes_to_usize(&body[0..4]);
+                let begin = bytes_to_usize(&body[4..8]);
+                let offset = bytes_to_usize(&body[8..12]);
                 Message::Request(index, begin, offset)
             },
             7 => {
-                let index = convert_big_endian_to_integer(&body[0..4]);
-                let begin = convert_big_endian_to_integer(&body[4..8]);
+                let index = bytes_to_usize(&body[0..4]);
+                let begin = bytes_to_usize(&body[4..8]);
                 let data = body[8..].to_owned();
                 Message::Piece(index, begin, data)
             },
@@ -217,7 +217,7 @@ impl Message {
         }
     }
 
-    fn encode(self) -> Vec<u8> {
+    fn serialize(self) -> Vec<u8> {
         let mut payload = vec![];
         match self {
             Message::KeepAlive => {},
@@ -227,7 +227,7 @@ impl Message {
             Message::NotInterested => payload.push(3),
             Message::Have(index) => {
                 payload.push(4);
-                payload.extend(convert_usize_to_bytes(index).iter().cloned());
+                payload.extend(usize_to_bytes(index).into_iter());
             },
             Message::Bitfield(bytes) => {
                 payload.push(5);
@@ -235,14 +235,14 @@ impl Message {
             },
             Message::Request(index, begin, amount) => {
                 payload.push(6);
-                payload.extend(convert_usize_to_bytes(index).iter().cloned());
-                payload.extend(convert_usize_to_bytes(begin).iter().cloned());
-                payload.extend(convert_usize_to_bytes(amount).iter().cloned());
+                payload.extend(usize_to_bytes(index).into_iter());
+                payload.extend(usize_to_bytes(begin).into_iter());
+                payload.extend(usize_to_bytes(amount).into_iter());
             },
             Message::Piece(index, begin, data) => {
                 payload.push(6);
-                payload.extend(convert_usize_to_bytes(index).iter().cloned());
-                payload.extend(convert_usize_to_bytes(begin).iter().cloned());
+                payload.extend(usize_to_bytes(index).into_iter());
+                payload.extend(usize_to_bytes(begin).into_iter());
                 payload.extend(data);
             },
             Message::Cancel => payload.push(8),
@@ -250,7 +250,7 @@ impl Message {
         };
 
         // prepend size
-        let mut size = convert_usize_to_bytes(payload.len());
+        let mut size = usize_to_bytes(payload.len());
         size.extend(payload);
         size
     }
@@ -279,14 +279,14 @@ const BYTE_1: usize = 256 * 256;
 const BYTE_2: usize = 256;
 const BYTE_3: usize = 1;
 
-fn convert_big_endian_to_integer(bytes: &[u8]) -> usize {
+fn bytes_to_usize(bytes: &[u8]) -> usize {
     bytes[0] as usize * BYTE_0 +
     bytes[1] as usize * BYTE_1 +
     bytes[2] as usize * BYTE_2 +
     bytes[3] as usize * BYTE_3
 }
 
-fn convert_usize_to_bytes(integer: usize) -> Vec<u8> {
+fn usize_to_bytes(integer: usize) -> Vec<u8> {
     let mut rest = integer;
     let first = rest / BYTE_0;
     rest -= first * BYTE_0;
