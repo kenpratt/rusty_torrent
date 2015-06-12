@@ -36,12 +36,12 @@ impl<'a> PeerConnection<'a> {
     fn connect(peer: &Peer, metainfo: &'a Metainfo) -> Result<PeerConnection<'a>, Error> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
-        let num_pieces = metainfo.info.pieces.len();
+        let num_pieces = metainfo.info.num_pieces;
         let mut conn = PeerConnection {
             metainfo: metainfo,
             stream: stream,
-            have: vec![false; num_pieces],
-            downloaded: vec![None; num_pieces],
+            have: vec![false; num_pieces as usize],
+            downloaded: vec![None; num_pieces as usize],
             am_i_choked: true,
             am_i_interested: false,
             are_they_choked: true,
@@ -156,8 +156,8 @@ impl<'a> PeerConnection<'a> {
     }
 
     fn next_piece_to_request(&self) -> Option<u32> {
-        for i in 0..self.downloaded.len() {
-            if self.downloaded[i].is_none() {
+        for i in 0..self.metainfo.info.num_pieces {
+            if self.downloaded[i as usize].is_none() {
                 return Some(i as u32)
             }
         }
@@ -166,7 +166,7 @@ impl<'a> PeerConnection<'a> {
     }
 
     fn send_request(&mut self, piece: u32) -> Result<(), Error> {
-        let num_pieces = self.downloaded.len() as u32;
+        let num_pieces = self.metainfo.info.num_pieces;
         let request_size = if piece == num_pieces - 1 {
             (self.metainfo.info.length - (self.metainfo.info.piece_length as u64 * (num_pieces as u64 - 1))) as u32
         } else {

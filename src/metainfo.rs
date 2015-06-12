@@ -44,6 +44,7 @@ pub type Sha1 = Vec<u8>;
 pub struct Info {
     pub piece_length: u32,
     pub pieces: Vec<Sha1>,
+    pub num_pieces: u32,
     pub name: String,
     pub length: u64,
 }
@@ -54,12 +55,14 @@ impl FromBencode for Info {
     fn from_bencode(bencode: &bencode::Bencode) -> Result<Info, decoder::Error> {
         match bencode {
             &Bencode::Dict(ref m) => {
-                let pieces_bytes: Vec<u8> = get_field_as_bytes!(m, "pieces");
-                let pieces: Vec<Vec<u8>> = pieces_bytes.chunks(20).map(|v| v.to_owned()).collect();
+                let pieces_bytes = get_field_as_bytes!(m, "pieces");
+                let pieces: Vec<Sha1> = pieces_bytes.chunks(20).map(|v| v.to_owned()).collect();
+                let num_pieces = pieces.len() as u32;
 
                 let info = Info {
                     piece_length: get_field!(m, "piece length"),
                     pieces: pieces,
+                    num_pieces: num_pieces,
                     name: get_field!(m, "name"),
                     length: get_field!(m, "length"),
                 };
