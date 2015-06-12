@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 
-use metainfo::Metainfo;
+use metainfo::{Metainfo, Sha1};
 use tracker_response::Peer;
 
 pub fn download(info: &Metainfo, peers: &[Peer]) {
@@ -19,13 +19,121 @@ pub fn download(info: &Metainfo, peers: &[Peer]) {
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
 const BLOCK_SIZE: u32 = 16384;
-type Block = Vec<u8>;
+
+struct Download<'a> {
+    metainfo: &'a Metainfo,
+    pieces:   Vec<Piece>,
+}
+
+impl<'a> Download<'a> {
+    fn new(metainfo: &Metainfo) -> Download {
+        let file_length = metainfo.info.length;
+        let piece_length = metainfo.info.piece_length;
+        let num_pieces = metainfo.info.num_pieces;
+
+        // create pieces
+        let mut pieces = vec![];
+        for i in 0..num_pieces {
+            let len = if i < (num_pieces - 1) {
+                piece_length
+            } else {
+                (file_length - (piece_length as u64 * (num_pieces as u64 - 1))) as u32
+            };
+            pieces.push(Piece::new(i, len, metainfo.info.pieces[i as usize].clone()));
+        }
+
+        Download {
+            metainfo: metainfo,
+            pieces:   pieces,
+        }
+    }
+
+    fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
+        let piece = &mut self.pieces[piece_index as usize];
+        piece.store(block_index, data)
+    }
+
+    fn next_block_to_request(&self, peer_has_pieces: &[bool]) -> Option<(u32, u32, u32)> {
+        for piece in self.pieces.iter() {
+            if peer_has_pieces[piece.index as usize] {
+                match piece.next_block_to_request() {
+                    Some(block) => {
+                        return Some((piece.index, block.index, block.length))
+                    },
+                    None => {}
+                }
+            }
+        }
+        None
+    }
+}
+
+struct Piece {
+    index:  u32,
+    length: u32,
+    hash:   Sha1,
+    blocks: Vec<Block>,
+}
+
+impl Piece {
+    fn new(index: u32, length: u32, hash: Sha1) -> Piece {
+        // create blocks
+        let mut blocks = vec![];
+        let num_blocks = (length as f64 / BLOCK_SIZE as f64).ceil() as u32;
+        for i in 0..num_blocks {
+            let len = if i < (num_blocks - 1) {
+                BLOCK_SIZE
+            } else {
+                length - (BLOCK_SIZE * (num_blocks - 1))
+            };
+            blocks.push(Block::new(i, len));
+        }
+
+        Piece {
+            index:  index,
+            length: length,
+            hash:   hash,
+            blocks: blocks,
+        }
+    }
+
+    fn store(&mut self, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
+        let block = &mut self.blocks[block_index as usize];
+        block.data = Some(data);
+        Ok(())
+    }
+
+    fn next_block_to_request(&self) -> Option<&Block> {
+        for block in self.blocks.iter() {
+            if block.data.is_none() {
+                return Some(block)
+            }
+        }
+        None
+    }
+}
+
+struct Block {
+    index:  u32,
+    length: u32,
+    data:   Option<Vec<u8>>,
+}
+
+impl Block {
+    fn new(index: u32, length: u32) -> Block {
+        Block {
+            index:  index,
+            length: length,
+            data:   None,
+        }
+    }
+}
 
 struct PeerConnection<'a> {
     metainfo: &'a Metainfo,
     stream: TcpStream,
     have: Vec<bool>,
-    downloaded: Vec<Option<Block>>,
+    download: Download<'a>,
     am_i_choked: bool,
     am_i_interested: bool,
     are_they_choked: bool,
@@ -41,7 +149,7 @@ impl<'a> PeerConnection<'a> {
             metainfo: metainfo,
             stream: stream,
             have: vec![false; num_pieces as usize],
-            downloaded: vec![None; num_pieces as usize],
+            download: Download::new(metainfo),
             am_i_choked: true,
             am_i_interested: false,
             are_they_choked: true,
@@ -128,12 +236,13 @@ impl<'a> PeerConnection<'a> {
             Message::Unchoke => {
                 if self.am_i_choked {
                     self.am_i_choked = false;
-                    try!(self.request_next_piece());
+                    try!(self.request_next_block());
                 }
             }
-            Message::Piece(index, offset, data) => {
-                self.downloaded[index as usize] = Some(data);
-                try!(self.request_next_piece());
+            Message::Piece(piece_index, offset, data) => {
+                let block_index = offset / BLOCK_SIZE;
+                try!(self.download.store(piece_index, block_index, data));
+                try!(self.request_next_block());
             }
             _ => panic!("Need to process message: {:?}", message)
         };
@@ -148,31 +257,17 @@ impl<'a> PeerConnection<'a> {
         Ok(())
     }
 
-    fn request_next_piece(&mut self) -> Result<(), Error> {
-        match self.next_piece_to_request() {
-            Some(piece_index) => self.send_request(piece_index),
-            None => Ok(())
-        }
-    }
-
-    fn next_piece_to_request(&self) -> Option<u32> {
-        for i in 0..self.metainfo.info.num_pieces {
-            if self.downloaded[i as usize].is_none() {
-                return Some(i as u32)
+    fn request_next_block(&mut self) -> Result<(), Error> {
+        match self.download.next_block_to_request(&self.have) {
+            Some((piece_index, block_index, block_length)) => {
+                let offset = block_index * BLOCK_SIZE;
+                self.send_message(Message::Request(piece_index, offset, block_length))
+            },
+            None => {
+                println!("Download complete!");
+                Ok(())
             }
         }
-        println!("Done downloading file!");
-        None
-    }
-
-    fn send_request(&mut self, piece: u32) -> Result<(), Error> {
-        let num_pieces = self.metainfo.info.num_pieces;
-        let request_size = if piece == num_pieces - 1 {
-            (self.metainfo.info.length - (self.metainfo.info.piece_length as u64 * (num_pieces as u64 - 1))) as u32
-        } else {
-            BLOCK_SIZE
-        };
-        self.send_message(Message::Request(piece, 0, request_size))
     }
 }
 
@@ -185,7 +280,7 @@ enum Message {
     Have(u32),
     Bitfield(Vec<u8>),
     Request(u32, u32, u32),
-    Piece(u32, u32, Block),
+    Piece(u32, u32, Vec<u8>),
     Cancel,  // TODO add params
     Port,    // TODO add params
 }
