@@ -78,11 +78,12 @@ impl<'a> Download<'a> {
 }
 
 struct Piece {
-    index:  u32,
-    length: u32,
+    index:        u32,
+    length:       u32,
     piece_length: u32,
-    hash:   Sha1,
-    blocks: Vec<Block>,
+    hash:         Sha1,
+    blocks:       Vec<Block>,
+    is_complete:  bool,
 }
 
 impl Piece {
@@ -100,21 +101,23 @@ impl Piece {
         }
 
         Piece {
-            index:  index,
-            length: length,
+            index:        index,
+            length:       length,
             piece_length: piece_length,
-            hash:   hash,
-            blocks: blocks,
+            hash:         hash,
+            blocks:       blocks,
+            is_complete:  false
         }
     }
 
     fn store(&mut self, file: &mut File, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
         {
+            // store data in the appropriate block
             let block = &mut self.blocks[block_index as usize];
             block.data = Some(data);
         }
 
-        if self.is_complete() {
+        if self.have_all_blocks() {
             // concatenate data from blocks together
             let mut data = vec![];
             for block in self.blocks.iter() {
@@ -123,22 +126,25 @@ impl Piece {
 
             // validate that piece data matches SHA1 hash
             if self.hash == calculate_sha1(&data) {
-                println!("Piece {} is complete and correct", self.index);
+                println!("Piece {} is complete and correct, writing to the file.", self.index);
                 let offset = self.index as u64 * self.piece_length as u64;
-                println!("Writing {} bytes to file at offset {}", data.len(), offset);
                 try!(file.seek(io::SeekFrom::Start(offset)));
                 try!(file.write_all(&data));
+                self.clear_block_data();
+                self.is_complete = true;
             } else {
                 println!("Piece is corrupt, deleting downloaded piece data!");
-                for block in self.blocks.iter_mut() {
-                    block.data = None;
-                }
+                self.clear_block_data();
             }
         }
         Ok(())
     }
 
     fn next_block_to_request(&self) -> Option<&Block> {
+        if self.is_complete {
+            return None
+        }
+
         for block in self.blocks.iter() {
             if block.data.is_none() {
                 return Some(block)
@@ -147,13 +153,19 @@ impl Piece {
         None
     }
 
-    fn is_complete(&self) -> bool {
+    fn have_all_blocks(&self) -> bool {
         for block in self.blocks.iter() {
             if block.data.is_none() {
                 return false
             }
         }
         true
+    }
+
+    fn clear_block_data(&mut self) {
+        for block in self.blocks.iter_mut() {
+            block.data = None;
+        }
     }
 }
 
