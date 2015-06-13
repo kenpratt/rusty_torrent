@@ -77,7 +77,6 @@ impl Download {
 
 struct Piece {
     index:        u32,
-    length:       u32,
     piece_length: u32,
     hash:         Sha1,
     blocks:       Vec<Block>,
@@ -100,7 +99,6 @@ impl Piece {
 
         Piece {
             index:        index,
-            length:       length,
             piece_length: piece_length,
             hash:         hash,
             blocks:       blocks,
