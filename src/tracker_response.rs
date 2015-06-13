@@ -13,7 +13,6 @@ pub struct TrackerResponse {
     pub min_interval: Option<u32>,
     pub complete: u32,
     pub incomplete: u32,
-    pub downloaded: u32,
     pub peers: Vec<Peer>,
 }
 
@@ -37,7 +36,6 @@ impl FromBencode for TrackerResponse {
                     min_interval: get_optional_field!(m, "min interval"),
                     complete: get_field!(m, "complete"),
                     incomplete: get_field!(m, "incomplete"),
-                    downloaded: get_field!(m, "downloaded"),
                     peers: peers,
                 };
                 Ok(response)
