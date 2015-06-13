@@ -4,6 +4,8 @@ use std::io::{Seek, Write};
 
 use hash::{calculate_sha1, Sha1};
 use metainfo::Metainfo;
+use rand;
+use rand::Rng;
 
 pub const BLOCK_SIZE: u32 = 16384;
 
@@ -52,17 +54,13 @@ impl Download {
     }
 
     pub fn next_block_to_request(&self, peer_has_pieces: &[bool]) -> Option<(u32, u32, u32)> {
-        for piece in self.pieces.iter() {
-            if peer_has_pieces[piece.index as usize] {
-                match piece.next_block_to_request() {
-                    Some(block) => {
-                        return Some((piece.index, block.index, block.length))
-                    },
-                    None => {}
-                }
-            }
+        match self.get_random_incomplete_piece(peer_has_pieces) {
+            Some(piece) => match piece.next_block_to_request() {
+                Some(block) => Some((piece.index, block.index, block.length)),
+                None => None
+            },
+            None => None
         }
-        None
     }
 
     fn is_complete(&self) -> bool {
@@ -72,6 +70,19 @@ impl Download {
             }
         }
         true
+    }
+
+    fn get_random_incomplete_piece(&self, peer_has_pieces: &[bool]) -> Option<&Piece> {
+        let mut random_num_generator = rand::thread_rng();
+
+        let incomplete_pieces: Vec<&Piece> = self.pieces.iter().filter(|x| !x.is_complete && peer_has_pieces[x.index as usize]).collect();
+        if incomplete_pieces.len() > 0 {
+            let random_incomplete_piece_index = random_num_generator.gen_range(0, incomplete_pieces.len());
+            let random_incomplete_piece = incomplete_pieces[random_incomplete_piece_index];
+            Some(random_incomplete_piece)
+        } else {
+            None
+        }
     }
 }
 
