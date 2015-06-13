@@ -1,5 +1,10 @@
-* Support torrents with multiple files.
 * Queue multiple requests with each peer.
-* Find better way to avoid downloading from ourself than hard-coding IP address (probably the easiest way is to try connecting to ourself and than checking the peer_id, as below).
+* Cancel queued or active requests if the file is completed by another peer.
 * When a handshake response is received, check to ensure the peer_id isn't the same as ours (connecting to ourself), and if so, close that connection.
+* Handle "Choke" message.
+* Prioritize pieces that are mostly complete, so we can clear them from memory.
+* Benchmark CPU usage to try to figure out why we use ~100% while writing files.
+* Implement "rarest-first" strategy where peers will prioritize files that they have that not many other peers do.
+* Support uploading/seed.
+* Support torrents with multiple files.
 * Support torrents with multiple trackers.
