@@ -59,7 +59,7 @@ fn run(filename: &str) -> Result<(), Error> {
 
     // wait for peers to complete
     for thr in peer_threads {
-        thr.join();
+        try!(thr.join());
     }
 
     Ok(())
@@ -76,6 +76,7 @@ pub enum Error {
     DecoderError(decoder::Error),
     DownloadError(download::Error),
     TrackerError(tracker::Error),
+    Any(Box<any::Any + Send>),
 }
 
 impl convert::From<decoder::Error> for Error {
@@ -93,5 +94,11 @@ impl convert::From<download::Error> for Error {
 impl convert::From<tracker::Error> for Error {
     fn from(err: tracker::Error) -> Error {
         Error::TrackerError(err)
+    }
+}
+
+impl convert::From<Box<any::Any + Send>> for Error {
+    fn from(err: Box<any::Any + Send>) -> Error {
+        Error::Any(err)
     }
 }
