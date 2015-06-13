@@ -73,16 +73,8 @@ impl Download {
     }
 
     fn get_random_incomplete_piece(&self, peer_has_pieces: &[bool]) -> Option<&Piece> {
-        let mut random_num_generator = rand::thread_rng();
-
         let incomplete_pieces: Vec<&Piece> = self.pieces.iter().filter(|x| !x.is_complete && peer_has_pieces[x.index as usize]).collect();
-        if incomplete_pieces.len() > 0 {
-            let random_incomplete_piece_index = random_num_generator.gen_range(0, incomplete_pieces.len());
-            let random_incomplete_piece = incomplete_pieces[random_incomplete_piece_index];
-            Some(random_incomplete_piece)
-        } else {
-            None
-        }
+        rand::thread_rng().choose(&incomplete_pieces).map(|x| *x)
     }
 }
 
@@ -148,20 +140,12 @@ impl Piece {
     }
 
     fn get_random_incomplete_to_request(&self) -> Option<&Block> {
-        let mut random_num_generator = rand::thread_rng();
-
         if self.is_complete {
             return None
         }
 
         let empty_blocks: Vec<&Block> = self.blocks.iter().filter(|x| x.data.is_none()).collect();
-        if empty_blocks.len() > 0 {
-            let random_empty_block_index = random_num_generator.gen_range(0, empty_blocks.len());
-            let random_empty_block = empty_blocks[random_empty_block_index];
-            Some(random_empty_block)
-        } else {
-            None
-        }
+        rand::thread_rng().choose(&empty_blocks).map(|x| *x)
     }
 
     fn have_all_blocks(&self) -> bool {
