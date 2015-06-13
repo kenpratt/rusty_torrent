@@ -10,8 +10,7 @@ mod tracker;
 mod tracker_response;
 
 use rand::Rng;
-use std::{convert, env, io, thread};
-use std::net::Ipv4Addr;
+use std::{any, convert, env, thread};
 use std::sync::{Arc, Mutex};
 use download::Download;
 

@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use download;
 use download::{BLOCK_SIZE, Download};
-use metainfo::Metainfo;
 use tracker_response::Peer;
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
