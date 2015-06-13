@@ -2,6 +2,7 @@ use std::{convert, io};
 use std::fmt;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
 
 use download;
 use download::{BLOCK_SIZE, Download};
@@ -10,34 +11,32 @@ use tracker_response::Peer;
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
 
-pub fn connect<'a>(our_peer_id: &'a str, peer: &Peer, metainfo: &'a Metainfo) -> Result<PeerConnection<'a>, Error> {
-    PeerConnection::connect(our_peer_id, peer, metainfo)
+pub fn connect(peer: &Peer, download: Arc<Mutex<Download>>) -> Result<PeerConnection, Error> {
+    PeerConnection::connect(peer, download)
 }
 
-pub struct PeerConnection<'a> {
-    our_peer_id: &'a str,
-    metainfo: &'a Metainfo,
+pub struct PeerConnection {
+    download_mutex: Arc<Mutex<Download>>,
     stream: TcpStream,
     have: Vec<bool>,
-    download: Download<'a>,
     am_i_choked: bool,
     am_i_interested: bool,
     are_they_choked: bool,
     are_they_interested: bool,
 }
 
-impl<'a> PeerConnection<'a> {
-    fn connect(our_peer_id: &'a str, peer: &Peer, metainfo: &'a Metainfo) -> Result<PeerConnection<'a>, Error> {
+impl PeerConnection {
+    fn connect(peer: &Peer, download_mutex: Arc<Mutex<Download>>) -> Result<PeerConnection, Error> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
-        let num_pieces = metainfo.info.num_pieces;
-        let download = try!(Download::new(metainfo));
+        let num_pieces = {
+            let download = download_mutex.lock().unwrap();
+            download.metainfo.info.num_pieces
+        };
         let mut conn = PeerConnection {
-            our_peer_id: our_peer_id,
-            metainfo: metainfo,
+            download_mutex: download_mutex,
             stream: stream,
             have: vec![false; num_pieces as usize],
-            download: download,
             am_i_choked: true,
             am_i_interested: false,
             are_they_choked: true,
@@ -61,12 +60,16 @@ impl<'a> PeerConnection<'a> {
     }
 
     fn send_handshake(&mut self) -> Result<(), Error> {
-        let mut message = vec![];
-        message.push(PROTOCOL.len() as u8);
-        message.extend(PROTOCOL.bytes());
-        message.extend(vec![0; 8].into_iter());
-        message.extend(self.metainfo.info_hash.iter().cloned());
-        message.extend(self.our_peer_id.bytes());
+        let message = {
+            let download = self.download_mutex.lock().unwrap();
+            let mut message = vec![];
+            message.push(PROTOCOL.len() as u8);
+            message.extend(PROTOCOL.bytes());
+            message.extend(vec![0; 8].into_iter());
+            message.extend(download.metainfo.info_hash.iter().cloned());
+            message.extend(download.our_peer_id.bytes());
+            message
+        };
         try!(self.stream.write_all(&message));
         Ok(())
     }
@@ -131,7 +134,10 @@ impl<'a> PeerConnection<'a> {
             }
             Message::Piece(piece_index, offset, data) => {
                 let block_index = offset / BLOCK_SIZE;
-                let is_complete = try!(self.download.store(piece_index, block_index, data));
+                let is_complete = {
+                    let mut download = self.download_mutex.lock().unwrap();
+                    try!(download.store(piece_index, block_index, data))
+                };
                 if is_complete {
                     return Ok(true)
                 } else {
@@ -152,7 +158,11 @@ impl<'a> PeerConnection<'a> {
     }
 
     fn request_next_block(&mut self) -> Result<(), Error> {
-        match self.download.next_block_to_request(&self.have) {
+        let next_block_to_request = {
+            let download = self.download_mutex.lock().unwrap();
+            download.next_block_to_request(&self.have)
+        };
+        match next_block_to_request {
             Some((piece_index, block_index, block_length)) => {
                 let offset = block_index * BLOCK_SIZE;
                 self.send_message(Message::Request(piece_index, offset, block_length))

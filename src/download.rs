@@ -7,14 +7,15 @@ use metainfo::Metainfo;
 
 pub const BLOCK_SIZE: u32 = 16384;
 
-pub struct Download<'a> {
-    metainfo: &'a Metainfo,
-    pieces:   Vec<Piece>,
-    file:     File,
+pub struct Download {
+    pub our_peer_id: String,
+    pub metainfo:    Metainfo,
+    pieces:          Vec<Piece>,
+    file:            File,
 }
 
-impl<'a> Download<'a> {
-    pub fn new(metainfo: &Metainfo) -> Result<Download, Error> {
+impl Download {
+    pub fn new(our_peer_id: String, metainfo: Metainfo) -> Result<Download, Error> {
         let file_length = metainfo.info.length;
         let piece_length = metainfo.info.piece_length;
         let num_pieces = metainfo.info.num_pieces;
@@ -35,9 +36,10 @@ impl<'a> Download<'a> {
         try!(file.set_len(metainfo.info.length));
 
         Ok(Download {
-            metainfo: metainfo,
-            pieces:   pieces,
-            file:     file,
+            our_peer_id: our_peer_id,
+            metainfo:    metainfo,
+            pieces:      pieces,
+            file:        file,
         })
     }
 
