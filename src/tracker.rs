@@ -20,6 +20,7 @@ pub fn get_peers(peer_id: &str, metainfo: &Metainfo) ->Result<Vec<Peer>, Error> 
                       ("uploaded", "0"),
                       ("event", "started"),
                       ("peer_id", peer_id),
+                      ("compact", "1"),
                       ("port", "6881")];
     let url = format!("{}?{}", metainfo.announce, encode_query_params(&params));
 
