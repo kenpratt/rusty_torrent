@@ -52,9 +52,10 @@ impl PeerConnection {
         let mut is_complete = false;
         while !is_complete {
             let message = try!(self.receive_message());
-            println!("Recieved: {:?}", message);
+            println!("Received: {:?}", message);
             is_complete = try!(self.process(message));
         }
+        println!("Download complete, disconnecting");
         Ok(())
     }
 
@@ -103,7 +104,7 @@ impl PeerConnection {
         let bytes_read = (&mut self.stream).take(bytes_to_read as u64).read_to_end(&mut buf);
         match bytes_read {
             Ok(n) if n == bytes_to_read as usize => Ok(buf),
-            Ok(_)  => Err(Error::NotEnoughData),
+            Ok(n) => Err(Error::NotEnoughData(bytes_to_read, n as u32)),
             Err(e) => try!(Err(e))
         }
     }
@@ -300,7 +301,7 @@ fn u32_to_bytes(integer: u32) -> Vec<u8> {
 pub enum Error {
     DownloadError(download::Error),
     IoError(io::Error),
-    NotEnoughData,
+    NotEnoughData(u32, u32),
 }
 
 impl convert::From<download::Error> for Error {
