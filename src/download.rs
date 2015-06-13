@@ -55,7 +55,7 @@ impl Download {
 
     pub fn next_block_to_request(&self, peer_has_pieces: &[bool]) -> Option<(u32, u32, u32)> {
         match self.get_random_incomplete_piece(peer_has_pieces) {
-            Some(piece) => match piece.next_block_to_request() {
+            Some(piece) => match piece.get_random_incomplete_to_request() {
                 Some(block) => Some((piece.index, block.index, block.length)),
                 None => None
             },
@@ -147,17 +147,21 @@ impl Piece {
         Ok(())
     }
 
-    fn next_block_to_request(&self) -> Option<&Block> {
+    fn get_random_incomplete_to_request(&self) -> Option<&Block> {
+        let mut random_num_generator = rand::thread_rng();
+
         if self.is_complete {
             return None
         }
 
-        for block in self.blocks.iter() {
-            if block.data.is_none() {
-                return Some(block)
-            }
+        let empty_blocks: Vec<&Block> = self.blocks.iter().filter(|x| x.data.is_none()).collect();
+        if empty_blocks.len() > 0 {
+            let random_empty_block_index = random_num_generator.gen_range(0, empty_blocks.len());
+            let random_empty_block = empty_blocks[random_empty_block_index];
+            Some(random_empty_block)
+        } else {
+            None
         }
-        None
     }
 
     fn have_all_blocks(&self) -> bool {
