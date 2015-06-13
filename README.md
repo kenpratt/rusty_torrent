@@ -26,9 +26,16 @@ Usage
 
 Download and install Rust 1.0 from http://www.rust-lang.org/install.html.
 
+Clone the repository:
+
+    git clone git@github.com:kenpratt/rusty_torrent.git
+    cd rusty_torrent
+
 To run:
 
     cargo run path/to/myfile.torrent
+
+Your file will be saved in the `downloads/` directory.
 
 To watch for changes and auto-rebuild (on OS X):
 

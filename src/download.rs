@@ -1,6 +1,7 @@
 use std::{convert, io};
 use std::fs::File;
 use std::io::{Seek, Write};
+use std::path::Path;
 
 use hash::{calculate_sha1, Sha1};
 use metainfo::Metainfo;
@@ -34,7 +35,8 @@ impl Download {
         }
 
         // create file
-        let file = try!(File::create(&metainfo.info.name));
+        let path = Path::new("downloads").join(&metainfo.info.name);
+        let file = try!(File::create(path));
         try!(file.set_len(metainfo.info.length));
 
         Ok(Download {
