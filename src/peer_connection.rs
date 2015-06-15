@@ -144,7 +144,7 @@ impl PeerConnection {
                     try!(self.request_next_block());
                 }
             }
-            _ => panic!("Need to process message: {:?}", message)
+            _ => return Err(Error::UnknownRequestType(message))
         };
         Ok(false)
     }
@@ -302,6 +302,7 @@ pub enum Error {
     DownloadError(download::Error),
     IoError(io::Error),
     NotEnoughData(u32, u32),
+    UnknownRequestType(Message),
 }
 
 impl convert::From<download::Error> for Error {
