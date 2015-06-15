@@ -144,6 +144,9 @@ impl PeerConnection {
                     try!(self.request_next_block());
                 }
             }
+            Message::Choke => {
+                self.am_i_choked = true;
+            }
             _ => return Err(Error::UnknownRequestType(message))
         };
         Ok(false)
@@ -158,6 +161,9 @@ impl PeerConnection {
     }
 
     fn request_next_block(&mut self) -> Result<(), Error> {
+        if self.am_i_choked == true {
+            return Ok(())
+        }
         let next_block_to_request = {
             let download = self.download_mutex.lock().unwrap();
             download.next_block_to_request(&self.have)
