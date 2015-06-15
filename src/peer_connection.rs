@@ -3,9 +3,10 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Receiver};
 
 use download;
-use download::{BLOCK_SIZE, Download};
+use download::{BLOCK_SIZE, Download, PeerMessage};
 use tracker_response::Peer;
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
@@ -23,7 +24,8 @@ pub struct PeerConnection {
     am_i_interested: bool,
     are_they_choked: bool,
     are_they_interested: bool,
-    requests_in_progress: u32,
+    requests_in_progress: Vec<RequestMetadata>,
+    download_channel: Receiver<PeerMessage>,
 }
 
 impl PeerConnection {
@@ -34,6 +36,13 @@ impl PeerConnection {
             let download = download_mutex.lock().unwrap();
             download.metainfo.info.num_pieces
         };
+
+        let (tx, rx) = channel::<PeerMessage>();
+        {
+            let mut download = download_mutex.lock().unwrap();
+            download.register_peer(tx);
+        }
+
         let mut conn = PeerConnection {
             download_mutex: download_mutex,
             stream: stream,
@@ -42,7 +51,8 @@ impl PeerConnection {
             am_i_interested: false,
             are_they_choked: true,
             are_they_interested: false,
-            requests_in_progress: 0,
+            requests_in_progress: vec![],
+            download_channel: rx,
         };
         try!(conn.run());
         println!("Disconnecting from {}:{}", peer.ip, peer.port);
@@ -54,6 +64,8 @@ impl PeerConnection {
         try!(self.receive_handshake());
         let mut is_complete = false;
         while !is_complete {
+            try!(self.check_for_messages_from_download());
+
             let message = try!(self.receive_message());
             println!("Received: {:?}", message);
             is_complete = try!(self.process(message));
@@ -136,8 +148,9 @@ impl PeerConnection {
                 }
             }
             Message::Piece(piece_index, offset, data) => {
-                self.requests_in_progress -= 1;
                 let block_index = offset / BLOCK_SIZE;
+                self.requests_in_progress.retain(|r| !r.matches(piece_index, block_index));
+
                 let is_complete = {
                     let mut download = self.download_mutex.lock().unwrap();
                     try!(download.store(piece_index, block_index, data))
@@ -168,7 +181,7 @@ impl PeerConnection {
         if self.am_i_choked == true {
             return Ok(())
         }
-        while self.requests_in_progress < MAX_CONCURRENT_REQUESTS {
+        while self.requests_in_progress.len() < MAX_CONCURRENT_REQUESTS as usize {
             let next_block_to_request = {
                 let download = self.download_mutex.lock().unwrap();
                 download.next_block_to_request(&self.have)
@@ -177,7 +190,12 @@ impl PeerConnection {
                 Some((piece_index, block_index, block_length)) => {
                     let offset = block_index * BLOCK_SIZE;
                     try!(self.send_message(Message::Request(piece_index, offset, block_length)));
-                    self.requests_in_progress += 1;
+                    self.requests_in_progress.push(RequestMetadata {
+                        piece_index: piece_index,
+                        block_index: block_index,
+                        offset: offset,
+                        block_length: block_length,
+                    });
                 },
                 None => {
                     println!("We've downloaded all the pieces we can from this peer.");
@@ -186,6 +204,43 @@ impl PeerConnection {
             }
         }
         Ok(())
+    }
+
+    fn check_for_messages_from_download(&mut self) -> Result<(), Error> {
+        loop {
+            match self.download_channel.try_recv() {
+                Ok(message) => try!(self.process_message_from_download(message)),
+                Err(_) => break
+            }
+        }
+        Ok(())
+    }
+
+    fn process_message_from_download(&mut self, message: PeerMessage) -> Result<(), Error> {
+        match message {
+            PeerMessage::CancelRequest(piece_index, block_index) => {
+                match self.requests_in_progress.iter().position(|r| r.matches(piece_index, block_index)) {
+                    Some(i) => {
+                        let r = self.requests_in_progress.remove(i);
+                        self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length))
+                    },
+                    None => Ok(())
+                }
+            }
+        }
+    }
+}
+
+struct RequestMetadata {
+    piece_index: u32,
+    block_index: u32,
+    offset: u32,
+    block_length: u32,
+}
+
+impl RequestMetadata {
+    fn matches(&self, piece_index: u32, block_index: u32) -> bool {
+        self.piece_index == piece_index && self.block_index == block_index
     }
 }
 
@@ -199,7 +254,7 @@ enum Message {
     Bitfield(Vec<u8>),
     Request(u32, u32, u32),
     Piece(u32, u32, Vec<u8>),
-    Cancel,  // TODO Add params
+    Cancel(u32, u32, u32),
     Port,    // TODO Add params
 }
 
@@ -224,7 +279,12 @@ impl Message {
                 let data = body[8..].to_owned();
                 Message::Piece(index, offset, data)
             },
-            8 => Message::Cancel,
+            8 => {
+                let index = bytes_to_u32(&body[0..4]);
+                let offset = bytes_to_u32(&body[4..8]);
+                let length = bytes_to_u32(&body[8..12]);
+                Message::Cancel(index, offset, length)
+            },
             9 => Message::Port,
             _ => panic!("Bad message id: {}", id)
         }
@@ -246,11 +306,11 @@ impl Message {
                 payload.push(5);
                 payload.extend(bytes);
             },
-            Message::Request(index, offset, amount) => {
+            Message::Request(index, offset, length) => {
                 payload.push(6);
                 payload.extend(u32_to_bytes(index).into_iter());
                 payload.extend(u32_to_bytes(offset).into_iter());
-                payload.extend(u32_to_bytes(amount).into_iter());
+                payload.extend(u32_to_bytes(length).into_iter());
             },
             Message::Piece(index, offset, data) => {
                 payload.push(6);
@@ -258,7 +318,12 @@ impl Message {
                 payload.extend(u32_to_bytes(offset).into_iter());
                 payload.extend(data);
             },
-            Message::Cancel => payload.push(8),
+            Message::Cancel(index, offset, length) => {
+                payload.push(8);
+                payload.extend(u32_to_bytes(index).into_iter());
+                payload.extend(u32_to_bytes(offset).into_iter());
+                payload.extend(u32_to_bytes(length).into_iter());
+            },
             Message::Port => payload.push(9),
         };
 
@@ -281,7 +346,7 @@ impl fmt::Debug for Message {
              Message::Bitfield(ref bytes) => write!(f, "Bitfield({:?})", bytes),
              Message::Request(ref index, ref offset, ref length) => write!(f, "Request({}, {}, {})", index, offset, length),
              Message::Piece(ref index, ref offset, ref data) => write!(f, "Piece({}, {}, size={})", index, offset, data.len()),
-             Message::Cancel => write!(f, "Cancel"),
+             Message::Cancel(ref index, ref offset, ref length) => write!(f, "Cancel({}, {}, {})", index, offset, length),
              Message::Port => write!(f, "Port"),
         }
     }

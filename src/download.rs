@@ -2,6 +2,7 @@ use std::{convert, io};
 use std::fs::File;
 use std::io::{Seek, Write};
 use std::path::Path;
+use std::sync::mpsc::{Sender, SendError};
 
 use hash::{calculate_sha1, Sha1};
 use metainfo::Metainfo;
@@ -15,6 +16,11 @@ pub struct Download {
     pub metainfo:    Metainfo,
     pieces:          Vec<Piece>,
     file:            File,
+    peer_channels:   Vec<Sender<PeerMessage>>,
+}
+
+pub enum PeerMessage {
+    CancelRequest(u32, u32),
 }
 
 impl Download {
@@ -40,11 +46,16 @@ impl Download {
         try!(file.set_len(metainfo.info.length));
 
         Ok(Download {
-            our_peer_id: our_peer_id,
-            metainfo:    metainfo,
-            pieces:      pieces,
-            file:        file,
+            our_peer_id:   our_peer_id,
+            metainfo:      metainfo,
+            pieces:        pieces,
+            file:          file,
+            peer_channels: vec![],
         })
+    }
+
+    pub fn register_peer(&mut self, channel: Sender<PeerMessage>) {
+        self.peer_channels.push(channel);
     }
 
     pub fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<bool, Error> {
@@ -52,6 +63,12 @@ impl Download {
             let piece = &mut self.pieces[piece_index as usize];
             try!(piece.store(&mut self.file, block_index, data));
         }
+
+        // notify peers that this block is complete
+        for channel in self.peer_channels.iter() {
+            channel.send(PeerMessage::CancelRequest(piece_index, block_index));
+        }
+
         Ok(self.is_complete())
     }
 
@@ -185,10 +202,17 @@ impl Block {
 #[derive(Debug)]
 pub enum Error {
     IoError(io::Error),
+    SendError(SendError<PeerMessage>),
 }
 
 impl convert::From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
         Error::IoError(err)
+    }
+}
+
+impl convert::From<SendError<PeerMessage>> for Error {
+    fn from(err: SendError<PeerMessage>) -> Error {
+        Error::SendError(err)
     }
 }
