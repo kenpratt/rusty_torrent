@@ -9,6 +9,7 @@ use download::{BLOCK_SIZE, Download};
 use tracker_response::Peer;
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
+const MAX_CONCURRENT_REQUESTS: u32 = 10;
 
 pub fn connect(peer: &Peer, download: Arc<Mutex<Download>>) -> Result<PeerConnection, Error> {
     PeerConnection::connect(peer, download)
@@ -22,6 +23,7 @@ pub struct PeerConnection {
     am_i_interested: bool,
     are_they_choked: bool,
     are_they_interested: bool,
+    requests_in_progress: u32,
 }
 
 impl PeerConnection {
@@ -40,6 +42,7 @@ impl PeerConnection {
             am_i_interested: false,
             are_they_choked: true,
             are_they_interested: false,
+            requests_in_progress: 0,
         };
         try!(conn.run());
         println!("Disconnecting from {}:{}", peer.ip, peer.port);
@@ -129,10 +132,11 @@ impl PeerConnection {
             Message::Unchoke => {
                 if self.am_i_choked {
                     self.am_i_choked = false;
-                    try!(self.request_next_block());
+                    try!(self.request_more_blocks());
                 }
             }
             Message::Piece(piece_index, offset, data) => {
+                self.requests_in_progress -= 1;
                 let block_index = offset / BLOCK_SIZE;
                 let is_complete = {
                     let mut download = self.download_mutex.lock().unwrap();
@@ -141,7 +145,7 @@ impl PeerConnection {
                 if is_complete {
                     return Ok(true)
                 } else {
-                    try!(self.request_next_block());
+                    try!(self.request_more_blocks());
                 }
             }
             Message::Choke => {
@@ -160,24 +164,28 @@ impl PeerConnection {
         Ok(())
     }
 
-    fn request_next_block(&mut self) -> Result<(), Error> {
+    fn request_more_blocks(&mut self) -> Result<(), Error> {
         if self.am_i_choked == true {
             return Ok(())
         }
-        let next_block_to_request = {
-            let download = self.download_mutex.lock().unwrap();
-            download.next_block_to_request(&self.have)
-        };
-        match next_block_to_request {
-            Some((piece_index, block_index, block_length)) => {
-                let offset = block_index * BLOCK_SIZE;
-                self.send_message(Message::Request(piece_index, offset, block_length))
-            },
-            None => {
-                println!("We've downloaded all the pieces we can from this peer.");
-                Ok(())
+        while self.requests_in_progress < MAX_CONCURRENT_REQUESTS {
+            let next_block_to_request = {
+                let download = self.download_mutex.lock().unwrap();
+                download.next_block_to_request(&self.have)
+            };
+            match next_block_to_request {
+                Some((piece_index, block_index, block_length)) => {
+                    let offset = block_index * BLOCK_SIZE;
+                    try!(self.send_message(Message::Request(piece_index, offset, block_length)));
+                    self.requests_in_progress += 1;
+                },
+                None => {
+                    println!("We've downloaded all the pieces we can from this peer.");
+                    return Ok(())
+                }
             }
         }
+        Ok(())
     }
 }
 

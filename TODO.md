@@ -1,4 +1,3 @@
-* Queue multiple requests with each peer.
 * Cancel queued or active requests if the file is completed by another peer.
 * When a handshake response is received, check to ensure the peer_id isn't the same as ours (connecting to ourself), and if so, close that connection.
 * Prioritize pieces that are mostly complete, so we can clear them from memory.
