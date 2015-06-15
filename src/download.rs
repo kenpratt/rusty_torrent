@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::mpsc::{Sender, SendError};
 
 use hash::{calculate_sha1, Sha1};
+use ipc::IPC;
 use metainfo::Metainfo;
 use rand;
 use rand::Rng;
@@ -16,11 +17,7 @@ pub struct Download {
     pub metainfo:    Metainfo,
     pieces:          Vec<Piece>,
     file:            File,
-    peer_channels:   Vec<Sender<PeerMessage>>,
-}
-
-pub enum PeerMessage {
-    CancelRequest(u32, u32),
+    peer_channels:   Vec<Sender<IPC>>,
 }
 
 impl Download {
@@ -54,7 +51,7 @@ impl Download {
         })
     }
 
-    pub fn register_peer(&mut self, channel: Sender<PeerMessage>) {
+    pub fn register_peer(&mut self, channel: Sender<IPC>) {
         self.peer_channels.push(channel);
     }
 
@@ -66,7 +63,7 @@ impl Download {
 
         // notify peers that this block is complete
         for channel in self.peer_channels.iter() {
-            channel.send(PeerMessage::CancelRequest(piece_index, block_index));
+            channel.send(IPC::CancelRequest(piece_index, block_index));
         }
 
         Ok(self.is_complete())
@@ -202,7 +199,7 @@ impl Block {
 #[derive(Debug)]
 pub enum Error {
     IoError(io::Error),
-    SendError(SendError<PeerMessage>),
+    SendError(SendError<IPC>),
 }
 
 impl convert::From<io::Error> for Error {
@@ -211,8 +208,8 @@ impl convert::From<io::Error> for Error {
     }
 }
 
-impl convert::From<SendError<PeerMessage>> for Error {
-    fn from(err: SendError<PeerMessage>) -> Error {
+impl convert::From<SendError<IPC>> for Error {
+    fn from(err: SendError<IPC>) -> Error {
         Error::SendError(err)
     }
 }

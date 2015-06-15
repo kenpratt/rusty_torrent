@@ -4,6 +4,7 @@ extern crate rand;
 mod decoder;
 mod download;
 mod hash;
+mod ipc;
 mod metainfo;
 mod peer_connection;
 mod tracker;

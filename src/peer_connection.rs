@@ -3,10 +3,12 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, RecvError, Sender, SendError};
+use std::thread;
 
 use download;
-use download::{BLOCK_SIZE, Download, PeerMessage};
+use download::{BLOCK_SIZE, Download};
+use ipc::IPC;
 use tracker_response::Peer;
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
@@ -25,7 +27,8 @@ pub struct PeerConnection {
     are_they_choked: bool,
     are_they_interested: bool,
     requests_in_progress: Vec<RequestMetadata>,
-    download_channel: Receiver<PeerMessage>,
+    rx: Receiver<IPC>,
+    tx: Sender<IPC>,
 }
 
 impl PeerConnection {
@@ -37,10 +40,10 @@ impl PeerConnection {
             download.metainfo.info.num_pieces
         };
 
-        let (tx, rx) = channel::<PeerMessage>();
+        let (tx, rx) = channel::<IPC>();
         {
             let mut download = download_mutex.lock().unwrap();
-            download.register_peer(tx);
+            download.register_peer(tx.clone());
         }
 
         let mut conn = PeerConnection {
@@ -52,7 +55,8 @@ impl PeerConnection {
             are_they_choked: true,
             are_they_interested: false,
             requests_in_progress: vec![],
-            download_channel: rx,
+            rx: rx,
+            tx: tx,
         };
         try!(conn.run());
         println!("Disconnecting from {}:{}", peer.ip, peer.port);
@@ -62,12 +66,16 @@ impl PeerConnection {
     fn run(&mut self) -> Result<(), Error> {
         try!(self.send_handshake());
         try!(self.receive_handshake());
+
+        // spawn a thread to funnel incoming messages from the socket into the channel
+        let tx_clone = self.tx.clone();
+        let stream_clone = self.stream.try_clone().unwrap();
+        thread::spawn(move || MessageFunnel::start(stream_clone, tx_clone));
+
+        // process messages received on the channel (both from the remote peer, and from Downlad)
         let mut is_complete = false;
         while !is_complete {
-            try!(self.check_for_messages_from_download());
-
-            let message = try!(self.receive_message());
-            println!("Received: {:?}", message);
+            let message = try!(self.rx.recv());
             is_complete = try!(self.process(message));
         }
         println!("Download complete, disconnecting");
@@ -90,11 +98,11 @@ impl PeerConnection {
     }
 
     fn receive_handshake(&mut self) -> Result<(), Error> {
-        let pstrlen = try!(self.read_n(1));
-        let pstr = try!(self.read_n(pstrlen[0] as u32));
-        let reserved = try!(self.read_n(8));
-        let info_hash = try!(self.read_n(20));
-        let peer_id = try!(self.read_n(20));
+        let pstrlen = try!(read_n(&mut self.stream, 1));
+        let pstr = try!(read_n(&mut self.stream, pstrlen[0] as u32));
+        let reserved = try!(read_n(&mut self.stream, 8));
+        let info_hash = try!(read_n(&mut self.stream, 20));
+        let peer_id = try!(read_n(&mut self.stream, 20));
         Ok(())
     }
 
@@ -104,27 +112,23 @@ impl PeerConnection {
         Ok(())
     }
 
-    fn receive_message(&mut self) -> Result<Message, Error> {
-        let message_size = bytes_to_u32(&try!(self.read_n(4)));
-        if message_size > 0 {
-            let message = try!(self.read_n(message_size));
-            Ok(Message::new(&message[0], &message[1..]))
-        } else {
-            Ok(Message::KeepAlive)
+    fn process(&mut self, ipc: IPC) -> Result<bool, Error> {
+        match ipc {
+            IPC::Message(message) => self.process_message(message),
+            IPC::CancelRequest(piece_index, block_index) => {
+                match self.requests_in_progress.iter().position(|r| r.matches(piece_index, block_index)) {
+                    Some(i) => {
+                        let r = self.requests_in_progress.remove(i);
+                        try!(self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length)));
+                    },
+                    None => {}
+                }
+                Ok(false)
+            }
         }
     }
 
-    fn read_n(&mut self, bytes_to_read: u32) -> Result<Vec<u8>, Error> {
-        let mut buf = vec![];
-        let bytes_read = (&mut self.stream).take(bytes_to_read as u64).read_to_end(&mut buf);
-        match bytes_read {
-            Ok(n) if n == bytes_to_read as usize => Ok(buf),
-            Ok(n) => Err(Error::NotEnoughData(bytes_to_read, n as u32)),
-            Err(e) => try!(Err(e))
-        }
-    }
-
-    fn process(&mut self, message: Message) -> Result<bool, Error>{
+    fn process_message(&mut self, message: Message) -> Result<bool, Error> {
         match message {
             Message::KeepAlive => {},
             Message::Bitfield(bytes) => {
@@ -205,29 +209,50 @@ impl PeerConnection {
         }
         Ok(())
     }
+}
 
-    fn check_for_messages_from_download(&mut self) -> Result<(), Error> {
-        loop {
-            match self.download_channel.try_recv() {
-                Ok(message) => try!(self.process_message_from_download(message)),
-                Err(_) => break
-            }
+struct MessageFunnel {
+    stream: TcpStream,
+    tx: Sender<IPC>,
+}
+
+impl MessageFunnel {
+    fn start(stream: TcpStream, tx: Sender<IPC>) {
+        let mut funnel = MessageFunnel {
+            stream: stream,
+            tx: tx,
+        };
+        match funnel.run() {
+            Ok(_) => {},
+            Err(e) => println!("Error: {:?}", e)
         }
-        Ok(())
     }
 
-    fn process_message_from_download(&mut self, message: PeerMessage) -> Result<(), Error> {
-        match message {
-            PeerMessage::CancelRequest(piece_index, block_index) => {
-                match self.requests_in_progress.iter().position(|r| r.matches(piece_index, block_index)) {
-                    Some(i) => {
-                        let r = self.requests_in_progress.remove(i);
-                        self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length))
-                    },
-                    None => Ok(())
-                }
-            }
+    fn run(&mut self) -> Result<(), Error> {
+        loop {
+            let message = try!(self.receive_message());
+            try!(self.tx.send(IPC::Message(message)));
         }
+    }
+
+    fn receive_message(&mut self) -> Result<Message, Error> {
+        let message_size = bytes_to_u32(&try!(read_n(&mut self.stream, 4)));
+        if message_size > 0 {
+            let message = try!(read_n(&mut self.stream, message_size));
+            Ok(Message::new(&message[0], &message[1..]))
+        } else {
+            Ok(Message::KeepAlive)
+        }
+    }
+}
+
+fn read_n(stream: &mut TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, Error> {
+    let mut buf = vec![];
+    let bytes_read = stream.take(bytes_to_read as u64).read_to_end(&mut buf);
+    match bytes_read {
+        Ok(n) if n == bytes_to_read as usize => Ok(buf),
+        Ok(n) => Err(Error::NotEnoughData(bytes_to_read, n as u32)),
+        Err(e) => try!(Err(e))
     }
 }
 
@@ -244,7 +269,7 @@ impl RequestMetadata {
     }
 }
 
-enum Message {
+pub enum Message {
     KeepAlive,
     Choke,
     Unchoke,
@@ -382,6 +407,8 @@ pub enum Error {
     IoError(io::Error),
     NotEnoughData(u32, u32),
     UnknownRequestType(Message),
+    ReceiveError(RecvError),
+    SendError(SendError<IPC>),
 }
 
 impl convert::From<download::Error> for Error {
@@ -393,5 +420,17 @@ impl convert::From<download::Error> for Error {
 impl convert::From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
         Error::IoError(err)
+    }
+}
+
+impl convert::From<RecvError> for Error {
+    fn from(err: RecvError) -> Error {
+        Error::ReceiveError(err)
+    }
+}
+
+impl convert::From<SendError<IPC>> for Error {
+    fn from(err: SendError<IPC>) -> Error {
+        Error::SendError(err)
     }
 }
