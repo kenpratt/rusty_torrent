@@ -11,7 +11,7 @@ mod tracker;
 mod tracker_response;
 
 use rand::Rng;
-use std::{any, convert, env, thread};
+use std::{any, convert, env, process, thread};
 use std::sync::{Arc, Mutex};
 use download::Download;
 
@@ -21,7 +21,8 @@ fn main() {
     // parse command-line arguments
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
-        println!("Usage: rusty_torrent path/to/myfile.torrent")
+        println!("Usage: rusty_torrent path/to/myfile.torrent");
+        process::exit(1)
     }
     let filename = &args[1];
 
