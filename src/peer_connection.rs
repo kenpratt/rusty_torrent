@@ -1,7 +1,7 @@
 use std::{convert, io};
 use std::fmt;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Receiver, RecvError, Sender, SendError};
 use std::thread;
@@ -14,7 +14,7 @@ use tracker_response::Peer;
 const PROTOCOL: &'static str = "BitTorrent protocol";
 const MAX_CONCURRENT_REQUESTS: u32 = 10;
 
-pub fn connect(peer: &Peer, download: Arc<Mutex<Download>>) -> Result<PeerConnection, Error> {
+pub fn connect(peer: &Peer, download: Arc<Mutex<Download>>) -> Result<(), Error> {
     PeerConnection::connect(peer, download)
 }
 
@@ -32,7 +32,7 @@ pub struct PeerConnection {
 }
 
 impl PeerConnection {
-    fn connect(peer: &Peer, download_mutex: Arc<Mutex<Download>>) -> Result<PeerConnection, Error> {
+    fn connect(peer: &Peer, download_mutex: Arc<Mutex<Download>>) -> Result<(), Error> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
         let num_pieces = {
@@ -60,17 +60,17 @@ impl PeerConnection {
         };
         try!(conn.run());
         println!("Disconnecting from {}:{}", peer.ip, peer.port);
-        Ok(conn)
+        Ok(())
     }
 
-    fn run(&mut self) -> Result<(), Error> {
+    fn run(mut self) -> Result<(), Error> {
         try!(self.send_handshake());
         try!(self.receive_handshake());
 
         // spawn a thread to funnel incoming messages from the socket into the channel
         let tx_clone = self.tx.clone();
         let stream_clone = self.stream.try_clone().unwrap();
-        thread::spawn(move || MessageFunnel::start(stream_clone, tx_clone));
+        let funnel_thread = thread::spawn(move || MessageFunnel::start(stream_clone, tx_clone));
 
         // process messages received on the channel (both from the remote peer, and from Downlad)
         let mut is_complete = false;
@@ -79,6 +79,8 @@ impl PeerConnection {
             is_complete = try!(self.process(message));
         }
         println!("Download complete, disconnecting");
+        self.stream.shutdown(Shutdown::Both);
+        funnel_thread.join();
         Ok(())
     }
 
