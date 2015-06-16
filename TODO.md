@@ -6,3 +6,4 @@
 * Support torrents with multiple files.
 * Support torrents with multiple trackers.
 * How are we ging to close connections
+* Announce each X minutes to Tracker that you have a file

@@ -11,9 +11,10 @@ use decoder;
 use metainfo::Metainfo;
 use tracker_response::{Peer, TrackerResponse};
 
-pub fn get_peers(peer_id: &str, metainfo: &Metainfo) ->Result<Vec<Peer>, Error> {
+pub fn get_peers(peer_id: &str, metainfo: &Metainfo, listener_port: u16) ->Result<Vec<Peer>, Error> {
     let length_string = metainfo.info.length.to_string();
     let encoded_info_hash = percent_encode(&metainfo.info_hash, FORM_URLENCODED_ENCODE_SET);
+    let listener_port_string = listener_port.to_string();
     let params = vec![("left", length_string.as_ref()),
                       ("info_hash", encoded_info_hash.as_ref()),
                       ("downloaded", "0"),
@@ -21,7 +22,7 @@ pub fn get_peers(peer_id: &str, metainfo: &Metainfo) ->Result<Vec<Peer>, Error> 
                       ("event", "started"),
                       ("peer_id", peer_id),
                       ("compact", "1"),
-                      ("port", "6881")];
+                      ("port", listener_port_string.as_ref())];
     let url = format!("{}?{}", metainfo.announce, encode_query_params(&params));
 
     let mut client = Client::new();

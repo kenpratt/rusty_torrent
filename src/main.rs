@@ -1,5 +1,6 @@
 extern crate bencode;
 extern crate rand;
+extern crate getopts;
 
 mod decoder;
 mod download;
@@ -10,6 +11,7 @@ mod peer_connection;
 mod tracker;
 mod tracker_response;
 
+use getopts::Options;
 use rand::Rng;
 use std::{any, convert, env, process, thread};
 use std::sync::{Arc, Mutex};
@@ -18,21 +20,57 @@ use download::Download;
 const PEER_ID_PREFIX: &'static str = "-RC0001-";
 
 fn main() {
-    // parse command-line arguments
+    // parse command-line arguments & options
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: rusty_torrent path/to/myfile.torrent");
-        process::exit(1)
-    }
-    let filename = &args[1];
+    let program = &args[0];
+    let mut opts = Options::new();
+    opts.optopt("p", "port", "set listen port to", "6881");
+    opts.optflag("h", "help", "print this help menu");
+    let matches = match opts.parse(&args[1..]) {
+        Ok(m) => { m }
+        Err(f) => { panic!(f.to_string()) }
+    };
 
-    match run(filename) {
+    if matches.opt_present("h") {
+        print_usage(&program, opts);
+        return;
+    }
+
+    let port = match matches.opt_str("p") {
+        Some(port_string) => {
+            let port: Result<u16,_> = port_string.parse();
+            match port {
+                Ok(p) => p,
+                Err(_) => return abort(&program, opts, format!("Bad port number: {}", port_string))
+            }
+        },
+        None => 6881
+    };
+
+    let rest = matches.free;
+    if rest.len() != 1 {
+        abort(&program, opts, format!("You must provide exactly 1 argument to rusty_torrent: {:?}", rest))
+    }
+
+    let filename = &rest[0];
+    match run(filename, port) {
         Ok(_) => {},
         Err(e) => println!("Error: {:?}", e)
     }
 }
 
-fn run(filename: &str) -> Result<(), Error> {
+fn print_usage(program: &str, opts: Options) {
+    let brief = format!("Usage: {} [options] path/to/myfile.torrent", program);
+    print!("{}", opts.usage(&brief));
+}
+
+fn abort(program: &str, opts: Options, err: String) {
+    println!("{}", err);
+    print_usage(program, opts);
+    process::exit(1);
+}
+
+fn run(filename: &str, listener_port: u16) -> Result<(), Error> {
     let our_peer_id = generate_peer_id();
     println!("Using peer id: {}", our_peer_id);
 
@@ -40,7 +78,7 @@ fn run(filename: &str) -> Result<(), Error> {
     let metainfo = try!(metainfo::parse(filename));
 
     // connect to tracker and download list of peers
-    let peers = try!(tracker::get_peers(&our_peer_id, &metainfo));
+    let peers = try!(tracker::get_peers(&our_peer_id, &metainfo, listener_port));
     println!("Found {} peers", peers.len());
 
     // create the download metadata object and stuff it inside a reference-counted mutex
