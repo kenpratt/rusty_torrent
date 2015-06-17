@@ -27,7 +27,6 @@ pub struct PeerConnection {
     stream: TcpStream,
     me: PeerMetadata,
     them: PeerMetadata,
-    requests_in_progress: Vec<RequestMetadata>,
     rx: Receiver<IPC>,
     tx: Sender<IPC>,
 }
@@ -64,7 +63,6 @@ impl PeerConnection {
             stream: stream,
             me: PeerMetadata::new(have_pieces),
             them: PeerMetadata::new(vec![false; num_pieces]),
-            requests_in_progress: vec![],
             rx: rx,
             tx: tx,
         };
@@ -156,11 +154,8 @@ impl PeerConnection {
         match ipc {
             IPC::Message(message) => self.process_message(message),
             IPC::BlockComplete(piece_index, block_index) => {
-                match self.requests_in_progress.iter().position(|r| r.matches(piece_index, block_index)) {
-                    Some(i) => {
-                        let r = self.requests_in_progress.remove(i);
-                        self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length))
-                    },
+                match self.me.remove_request(piece_index, block_index) {
+                    Some(r) => self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length)),
                     None => Ok(())
                 }
             },
@@ -221,7 +216,7 @@ impl PeerConnection {
             },
             Message::Piece(piece_index, offset, data) => {
                 let block_index = offset / BLOCK_SIZE;
-                self.requests_in_progress.retain(|r| !r.matches(piece_index, block_index));
+                self.me.remove_request(piece_index, block_index);
                 {
                     let mut download = self.download_mutex.lock().unwrap();
                     try!(download.store(piece_index, block_index, data))
@@ -270,7 +265,7 @@ impl PeerConnection {
             return Ok(())
         }
 
-        while self.requests_in_progress.len() < MAX_CONCURRENT_REQUESTS as usize {
+        while self.me.requests.len() < MAX_CONCURRENT_REQUESTS as usize {
             let next_block_to_request = {
                 let download = self.download_mutex.lock().unwrap();
                 download.next_block_to_request(&self.them.has_pieces)
@@ -279,7 +274,7 @@ impl PeerConnection {
                 Some((piece_index, block_index, block_length)) => {
                     let offset = block_index * BLOCK_SIZE;
                     try!(self.send_message(Message::Request(piece_index, offset, block_length)));
-                    self.requests_in_progress.push(RequestMetadata {
+                    self.me.requests.push(RequestMetadata {
                         piece_index: piece_index,
                         block_index: block_index,
                         offset: offset,
@@ -309,6 +304,7 @@ struct PeerMetadata {
     has_pieces: Vec<bool>,
     is_choked: bool,
     is_interested: bool,
+    requests: Vec<RequestMetadata>,
 }
 
 impl PeerMetadata {
@@ -317,6 +313,17 @@ impl PeerMetadata {
             has_pieces: has_pieces,
             is_choked: true,
             is_interested: false,
+            requests: vec![],
+        }
+    }
+
+    fn remove_request(&mut self, piece_index: u32, block_index: u32) -> Option<RequestMetadata> {
+        match self.requests.iter().position(|r| r.matches(piece_index, block_index)) {
+            Some(i) => {
+                let r = self.requests.remove(i);
+                Some(r)
+            },
+            None => None
         }
     }
 }
