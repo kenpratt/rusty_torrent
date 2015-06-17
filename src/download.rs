@@ -58,6 +58,10 @@ impl Download {
     pub fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
         {
             let piece = &mut self.pieces[piece_index as usize];
+            if piece.is_complete || piece.has_block(block_index) {
+                // if we already have this block, do an early return to avoid re-writing the piece, sending complete messages, etc
+                return Ok(())
+            }
             try!(piece.store(&mut self.file, block_index, data));
         }
 
@@ -71,6 +75,7 @@ impl Download {
 
         // notify peers if download is complete
         if self.is_complete() {
+            println!("Download complete");
             self.broadcast(IPC::DownloadComplete);
         }
 
@@ -192,6 +197,10 @@ impl Piece {
 
         let empty_blocks: Vec<&Block> = self.blocks.iter().filter(|x| x.data.is_none()).collect();
         rand::thread_rng().choose(&empty_blocks).map(|x| *x)
+    }
+
+    fn has_block(&self, block_index: u32) -> bool {
+        self.blocks[block_index as usize].data.is_some()
     }
 
     fn have_all_blocks(&self) -> bool {

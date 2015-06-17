@@ -8,4 +8,3 @@
 * Announce to tracker when file completes.
 * Instead of closing peer when Download completes, close it when neither peer is interested anymore?
 * Refactor TcpStream reads to be buffered in a more sensible way, return disconnects as control signal or specialized error.
-* Protect against blocks saving more than once when another peer completes.
