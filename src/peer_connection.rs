@@ -17,6 +17,10 @@ pub fn connect(peer: &Peer, download_mutex: Arc<Mutex<Download>>) -> Result<(), 
     PeerConnection::connect(peer, download_mutex)
 }
 
+pub fn accept(stream: TcpStream, download_mutex: Arc<Mutex<Download>>) -> Result<(), Error> {
+    PeerConnection::accept(stream, download_mutex)
+}
+
 pub struct PeerConnection {
     download_mutex: Arc<Mutex<Download>>,
     stream: TcpStream,
@@ -59,6 +63,11 @@ impl PeerConnection {
         };
         try!(conn.run());
         println!("Disconnecting from {}:{}", peer.ip, peer.port);
+        Ok(())
+    }
+
+    fn accept(stream: TcpStream, download_mutex: Arc<Mutex<Download>>) -> Result<(), Error> {
+        println!("Accepted connection from a peer!");
         Ok(())
     }
 

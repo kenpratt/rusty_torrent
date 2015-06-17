@@ -6,6 +6,7 @@ mod decoder;
 mod download;
 mod hash;
 mod ipc;
+mod listener;
 mod metainfo;
 mod peer_connection;
 mod tracker;
@@ -86,6 +87,9 @@ fn run(filename: &str, listener_port: u16) -> Result<(), Error> {
     // create the download metadata object and stuff it inside a reference-counted mutex
     let download = try!(Download::new(our_peer_id, metainfo));
     let download_mutex = Arc::new(Mutex::new(download));
+
+    // spawn thread to listen for incoming request
+    listener::start(listener_port, download_mutex.clone());
 
     // spawn threads to connect to peers and start the download
     let peer_threads: Vec<JoinHandle<()>> = peers.into_iter().map(|peer| {
