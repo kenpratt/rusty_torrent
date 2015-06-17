@@ -114,10 +114,13 @@ impl Download {
         rand::thread_rng().choose(&incomplete_pieces).map(|x| *x)
     }
 
-    fn broadcast(&self, ipc: IPC) {
-        for channel in self.peer_channels.iter() {
-            channel.send(ipc.clone());
-        }
+    fn broadcast(&mut self, ipc: IPC) {
+        self.peer_channels.retain(|channel| {
+            match channel.send(ipc.clone()) {
+                Ok(_) => true,
+                Err(SendError(_)) => false // presumably channel has disconnected
+            }
+        });
     }
 }
 
@@ -226,17 +229,10 @@ impl Block {
 #[derive(Debug)]
 pub enum Error {
     IoError(io::Error),
-    SendError(SendError<IPC>),
 }
 
 impl convert::From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
         Error::IoError(err)
-    }
-}
-
-impl convert::From<SendError<IPC>> for Error {
-    fn from(err: SendError<IPC>) -> Error {
-        Error::SendError(err)
     }
 }

@@ -51,6 +51,7 @@ impl PeerConnection {
         };
         let num_pieces = have_pieces.len();
 
+        // register IPC channel with Download
         let (tx, rx) = channel::<IPC>();
         {
             let mut download = download_mutex.lock().unwrap();
