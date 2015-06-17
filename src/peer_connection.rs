@@ -122,10 +122,26 @@ impl PeerConnection {
 
     fn receive_handshake(&mut self) -> Result<(), Error> {
         let pstrlen = try!(read_n(&mut self.stream, 1));
-        let pstr = try!(read_n(&mut self.stream, pstrlen[0] as u32));
-        let reserved = try!(read_n(&mut self.stream, 8));
+        try!(read_n(&mut self.stream, pstrlen[0] as u32)); // ignore pstr
+        try!(read_n(&mut self.stream, 8)); // ignore reserved
         let info_hash = try!(read_n(&mut self.stream, 20));
         let peer_id = try!(read_n(&mut self.stream, 20));
+
+        {
+            let download = self.download_mutex.lock().unwrap();
+
+            // validate info hash
+            if info_hash != download.metainfo.info_hash {
+                return Err(Error::InvalidInfoHash);
+            }
+
+            // validate peer id
+            let our_peer_id: Vec<u8> = download.our_peer_id.bytes().collect();
+            if peer_id == our_peer_id {
+                return Err(Error::ConnectingToSelf);
+            }
+        }
+
         Ok(())
     }
 
@@ -497,6 +513,8 @@ fn u32_to_bytes(integer: u32) -> Vec<u8> {
 
 #[derive(Debug)]
 pub enum Error {
+    InvalidInfoHash,
+    ConnectingToSelf,
     DownloadError(download::Error),
     IoError(io::Error),
     NotEnoughData(u32, u32),
