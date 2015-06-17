@@ -161,8 +161,31 @@ impl PeerConnection {
     }
 
     fn process_message(&mut self, message: Message) -> Result<(), Error> {
+        println!("Received: {:?}", message);
         match message {
             Message::KeepAlive => {},
+            Message::Choke => {
+                self.me.is_choked = true;
+            },
+            Message::Unchoke => {
+                if self.me.is_choked {
+                    self.me.is_choked = false;
+                    try!(self.request_more_blocks());
+                }
+            },
+            Message::Interested => {
+                self.them.is_interested = true;
+                // TODO start sending them blocks
+            },
+            Message::NotInterested => {
+                self.them.is_interested = false;
+                // TODO stop sending them blocks
+            },
+            Message::Have(have_index) => {
+                self.them.has_pieces[have_index as usize] = true;
+                try!(self.update_my_interested_status());
+                try!(self.request_more_blocks());
+            },
             Message::Bitfield(bytes) => {
                 for have_index in 0..self.them.has_pieces.len() {
                     let bytes_index = have_index / 8;
@@ -173,17 +196,11 @@ impl PeerConnection {
                     self.them.has_pieces[have_index] = value;
                 };
                 try!(self.update_my_interested_status());
+                try!(self.request_more_blocks());
             },
-            Message::Have(have_index) => {
-                self.them.has_pieces[have_index as usize] = true;
-                try!(self.update_my_interested_status());
+            Message::Request(piece_index, offset, length) => {
+                // TODO implement Request
             },
-            Message::Unchoke => {
-                if self.me.is_choked {
-                    self.me.is_choked = false;
-                    try!(self.request_more_blocks());
-                }
-            }
             Message::Piece(piece_index, offset, data) => {
                 let block_index = offset / BLOCK_SIZE;
                 self.requests_in_progress.retain(|r| !r.matches(piece_index, block_index));
@@ -193,10 +210,10 @@ impl PeerConnection {
                 }
                 try!(self.update_my_interested_status());
                 try!(self.request_more_blocks());
-            }
-            Message::Choke => {
-                self.me.is_choked = true;
-            }
+            },
+            Message::Cancel(piece_index, offset, length) => {
+                // TODO implement Cancel
+            },
             _ => return Err(Error::UnknownRequestType(message))
         };
         Ok(())
@@ -347,7 +364,7 @@ pub enum Message {
     Request(u32, u32, u32),
     Piece(u32, u32, Vec<u8>),
     Cancel(u32, u32, u32),
-    Port,    // TODO Add params
+    Port, // TODO Add params
 }
 
 impl Message {
