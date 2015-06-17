@@ -7,3 +7,6 @@
 * Support torrents with multiple trackers.
 * How are we ging to close connections
 * Announce each X minutes to Tracker that you have a file
+* Un-register peers from Download when they close.
+* Instead of closing peer when Download completes, close it when neither peer is interested anymore?
+* Refactor TcpStream reads to be buffered in a more sensible way, return disconnects as control signal or specialized error.

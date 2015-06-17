@@ -39,6 +39,15 @@ impl PeerConnection {
     fn connect(peer: &Peer, download_mutex: Arc<Mutex<Download>>) -> Result<(), Error> {
         println!("Connecting to {}:{}", peer.ip, peer.port);
         let stream = try!(TcpStream::connect((peer.ip, peer.port)));
+        PeerConnection::new(stream, download_mutex, true)
+    }
+
+    fn accept(stream: TcpStream, download_mutex: Arc<Mutex<Download>>) -> Result<(), Error> {
+        println!("Received connection from a peer!");
+        PeerConnection::new(stream, download_mutex, false)
+    }
+
+    fn new(stream: TcpStream, download_mutex: Arc<Mutex<Download>>, send_handshake_first: bool) -> Result<(), Error> {
         let num_pieces = {
             let download = download_mutex.lock().unwrap();
             download.metainfo.info.num_pieces
@@ -63,19 +72,23 @@ impl PeerConnection {
             rx: rx,
             tx: tx,
         };
-        try!(conn.run());
-        println!("Disconnecting from {}:{}", peer.ip, peer.port);
+
+        try!(conn.run(send_handshake_first));
+
+        println!("Disconnected");
         Ok(())
     }
 
-    fn accept(stream: TcpStream, download_mutex: Arc<Mutex<Download>>) -> Result<(), Error> {
-        println!("Accepted connection from a peer!");
-        Ok(())
-    }
+    fn run(mut self, send_handshake_first: bool) -> Result<(), Error> {
+        if send_handshake_first {
+            try!(self.send_handshake());
+            try!(self.receive_handshake());
+        } else {
+            try!(self.receive_handshake());
+            try!(self.send_handshake());
+        }
 
-    fn run(mut self) -> Result<(), Error> {
-        try!(self.send_handshake());
-        try!(self.receive_handshake());
+        println!("Handshake complete");
 
         // spawn a thread to funnel incoming messages from the socket into the channel
         let tx_clone = self.tx.clone();
