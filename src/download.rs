@@ -39,7 +39,8 @@ impl Download {
             } else {
                 (file_length - offset) as u32
             };
-            let piece = try!(Piece::new(i, length, offset, metainfo.info.pieces[i as usize].clone(), &mut file));
+            let mut piece = Piece::new(i, length, offset, metainfo.info.pieces[i as usize].clone());
+            try!(piece.verify(&mut file));
             pieces.push(piece);
         }
 
@@ -112,7 +113,7 @@ impl Download {
         for piece in self.pieces.iter() {
             if !piece.is_complete && peer_has_pieces[piece.index as usize] {
                 for block in piece.blocks.iter() {
-                    if block.data.is_none() && !request_queue.has(piece.index, block.index) {
+                    if !block.is_complete && !request_queue.has(piece.index, block.index) {
                         out.push((piece.index, block.index, block.length));
                     }
                 }
@@ -146,6 +147,7 @@ impl Download {
 
 struct Piece {
     index:       u32,
+    length:      u32,
     offset:      u64,
     hash:        Sha1,
     blocks:      Vec<Block>,
@@ -153,7 +155,7 @@ struct Piece {
 }
 
 impl Piece {
-    fn new(index: u32, length: u32, offset: u64, hash: Sha1, file: &mut File) -> Result<Piece, Error> {
+    fn new(index: u32, length: u32, offset: u64, hash: Sha1) -> Piece {
         // create blocks
         let mut blocks = vec![];
         let num_blocks = (length as f64 / BLOCK_SIZE as f64).ceil() as u32;
@@ -166,83 +168,78 @@ impl Piece {
             blocks.push(Block::new(i, len));
         }
 
-        // check if this piece is already complete
-        try!(file.seek(io::SeekFrom::Start(offset)));
-        let mut buf = vec![];
-        try!(file.take(length as u64).read_to_end(&mut buf));
-        let is_complete = hash == calculate_sha1(&buf);
-
-        Ok(Piece {
+        Piece {
             index:       index,
+            length:      length,
             offset:      offset,
             hash:        hash,
             blocks:      blocks,
-            is_complete: is_complete,
-        })
+            is_complete: false,
+        }
     }
 
     fn store(&mut self, file: &mut File, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
         {
-            // store data in the appropriate block
-            let block = &mut self.blocks[block_index as usize];
-            block.data = Some(data);
+            // store data in the appropriate point in the file
+            let offset = self.offset + (block_index * BLOCK_SIZE) as u64;
+            try!(file.seek(io::SeekFrom::Start(offset)));
+            try!(file.write_all(&data));
+            self.blocks[block_index as usize].is_complete = true;
         }
 
-        if self.have_all_blocks() {
-            // concatenate data from blocks together
-            let mut data = vec![];
-            for block in self.blocks.iter() {
-                data.extend(block.data.clone().unwrap());
-            }
-
-            // validate that piece data matches SHA1 hash
-            println!("Have {} bytes of data for index {}", data.len(), self.index);
-            if self.hash == calculate_sha1(&data) {
-                println!("Piece {} is complete and correct, writing to the file.", self.index);
-                try!(file.seek(io::SeekFrom::Start(self.offset)));
-                try!(file.write_all(&data));
-                self.clear_block_data();
-                self.is_complete = true;
-            } else {
-                println!("Piece is corrupt, deleting downloaded piece data!");
-                self.clear_block_data();
+        if self.has_all_blocks() {
+            let valid = try!(self.verify(file));
+            if !valid {
+                self.reset_blocks();
             }
         }
+
         Ok(())
     }
 
-    fn has_block(&self, block_index: u32) -> bool {
-        self.blocks[block_index as usize].data.is_some()
+    fn verify(&mut self, file: &mut File) -> Result<bool, Error> {
+        // read in the part of the file corresponding to the piece
+        try!(file.seek(io::SeekFrom::Start(self.offset)));
+        let mut data = vec![];
+        try!(file.take(self.length as u64).read_to_end(&mut data));
+
+        // calculate the hash, verify it, and update is_complete
+        self.is_complete = self.hash == calculate_sha1(&data);
+        Ok(self.is_complete)
     }
 
-    fn have_all_blocks(&self) -> bool {
+    fn has_block(&self, block_index: u32) -> bool {
+        self.blocks[block_index as usize].is_complete
+    }
+
+    fn has_all_blocks(&self) -> bool {
         for block in self.blocks.iter() {
-            if block.data.is_none() {
-                return false
+            if !block.is_complete {
+                return false;
             }
         }
         true
     }
 
-    fn clear_block_data(&mut self) {
+    fn reset_blocks(&mut self) {
         for block in self.blocks.iter_mut() {
-            block.data = None;
+            block.is_complete = false;
         }
     }
 }
 
 struct Block {
-    index:  u32,
-    length: u32,
-    data:   Option<Vec<u8>>,
+    index:       u32,
+    length:      u32,
+    is_complete: bool,
 }
 
 impl Block {
     fn new(index: u32, length: u32) -> Block {
         Block {
-            index:  index,
-            length: length,
-            data:   None,
+            index:       index,
+            length:      length,
+            is_complete: false,
         }
     }
 }
