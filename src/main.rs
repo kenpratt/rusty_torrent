@@ -1,6 +1,6 @@
 extern crate bencode;
-extern crate rand;
 extern crate getopts;
+extern crate rand;
 
 mod decoder;
 mod download;

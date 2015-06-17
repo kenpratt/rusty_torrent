@@ -1,5 +1,3 @@
-extern crate sha1;
-
 use bencode;
 use bencode::{Bencode, FromBencode};
 use bencode::util::ByteString;

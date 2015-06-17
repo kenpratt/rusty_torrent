@@ -7,3 +7,4 @@
 * Instead of closing peer when Download completes, close it when neither peer is interested anymore?
 * Refactor TcpStream reads to be buffered in a more sensible way, return disconnects as control signal or specialized error.
 * Create separate thread for sending messages on TcpStream, so that chunks being uploaded don't block the main control thread for each PeerConnection.
+* Only verify the file if it already existed on boot.
