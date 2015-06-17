@@ -77,6 +77,15 @@ impl Download {
         Ok(())
     }
 
+    pub fn is_interested(&self, peer_has_pieces: &[bool]) -> bool {
+        for piece in self.pieces.iter() {
+            if !piece.is_complete && peer_has_pieces[piece.index as usize] {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn next_block_to_request(&self, peer_has_pieces: &[bool]) -> Option<(u32, u32, u32)> {
         match self.get_random_incomplete_piece(peer_has_pieces) {
             Some(piece) => match piece.get_random_incomplete_to_request() {

@@ -149,10 +149,12 @@ impl PeerConnection {
             },
             IPC::PieceComplete(piece_index) => {
                 self.me.has_pieces[piece_index as usize] = true;
+                try!(self.update_my_interested_status());
                 Ok(())
             },
             IPC::DownloadComplete => {
                 self.halt = true;
+                try!(self.update_my_interested_status());
                 Ok(())
             },
         }
@@ -170,11 +172,11 @@ impl PeerConnection {
                     let value = (byte & mask) != 0;
                     self.them.has_pieces[have_index] = value;
                 };
-                try!(self.send_interested());
+                try!(self.update_my_interested_status());
             },
             Message::Have(have_index) => {
                 self.them.has_pieces[have_index as usize] = true;
-                try!(self.send_interested());
+                try!(self.update_my_interested_status());
             },
             Message::Unchoke => {
                 if self.me.is_choked {
@@ -189,6 +191,7 @@ impl PeerConnection {
                     let mut download = self.download_mutex.lock().unwrap();
                     try!(download.store(piece_index, block_index, data))
                 }
+                try!(self.update_my_interested_status());
                 try!(self.request_more_blocks());
             }
             Message::Choke => {
@@ -199,12 +202,19 @@ impl PeerConnection {
         Ok(())
     }
 
-    fn send_interested(&mut self) -> Result<(), Error> {
-        if !self.me.is_interested {
-            self.me.is_interested = true;
-            try!(self.send_message(Message::Interested));
+    fn update_my_interested_status(&mut self) -> Result<(), Error> {
+        let am_interested = {
+            let download = self.download_mutex.lock().unwrap();
+            download.is_interested(&self.them.has_pieces)
+        };
+
+        if self.me.is_interested != am_interested {
+            self.me.is_interested = am_interested;
+            let message = if am_interested { Message::Interested } else { Message::NotInterested };
+            self.send_message(message)
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     fn send_bitfield(&mut self) -> Result<(), Error> {
@@ -221,9 +231,10 @@ impl PeerConnection {
     }
 
     fn request_more_blocks(&mut self) -> Result<(), Error> {
-        if self.me.is_choked {
+        if self.me.is_choked || !self.me.is_interested {
             return Ok(())
         }
+
         while self.requests_in_progress.len() < MAX_CONCURRENT_REQUESTS as usize {
             let next_block_to_request = {
                 let download = self.download_mutex.lock().unwrap();
