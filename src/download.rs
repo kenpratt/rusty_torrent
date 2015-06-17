@@ -64,6 +64,11 @@ impl Download {
         // notify peers that this block is complete
         self.broadcast(IPC::BlockComplete(piece_index, block_index));
 
+        // notify peers if piece is complete
+        if self.pieces[piece_index as usize].is_complete {
+            self.broadcast(IPC::PieceComplete(piece_index));
+        }
+
         // notify peers if download is complete
         if self.is_complete() {
             self.broadcast(IPC::DownloadComplete);
@@ -80,6 +85,10 @@ impl Download {
             },
             None => None
         }
+    }
+
+    pub fn have_pieces(&self) -> Vec<bool> {
+        self.pieces.iter().map(|p| p.is_complete).collect()
     }
 
     fn is_complete(&self) -> bool {

@@ -25,11 +25,8 @@ pub struct PeerConnection {
     halt: bool,
     download_mutex: Arc<Mutex<Download>>,
     stream: TcpStream,
-    have: Vec<bool>,
-    am_i_choked: bool,
-    am_i_interested: bool,
-    are_they_choked: bool,
-    are_they_interested: bool,
+    me: PeerMetadata,
+    them: PeerMetadata,
     requests_in_progress: Vec<RequestMetadata>,
     rx: Receiver<IPC>,
     tx: Sender<IPC>,
@@ -48,10 +45,11 @@ impl PeerConnection {
     }
 
     fn new(stream: TcpStream, download_mutex: Arc<Mutex<Download>>, send_handshake_first: bool) -> Result<(), Error> {
-        let num_pieces = {
+        let have_pieces = {
             let download = download_mutex.lock().unwrap();
-            download.metainfo.info.num_pieces
+            download.have_pieces()
         };
+        let num_pieces = have_pieces.len();
 
         let (tx, rx) = channel::<IPC>();
         {
@@ -63,11 +61,8 @@ impl PeerConnection {
             halt: false,
             download_mutex: download_mutex,
             stream: stream,
-            have: vec![false; num_pieces as usize],
-            am_i_choked: true,
-            am_i_interested: false,
-            are_they_choked: true,
-            are_they_interested: false,
+            me: PeerMetadata::new(have_pieces),
+            them: PeerMetadata::new(vec![false; num_pieces]),
             requests_in_progress: vec![],
             rx: rx,
             tx: tx,
@@ -149,6 +144,10 @@ impl PeerConnection {
                     None => Ok(())
                 }
             },
+            IPC::PieceComplete(piece_index) => {
+                self.me.has_pieces[piece_index as usize] = true;
+                Ok(())
+            },
             IPC::DownloadComplete => {
                 self.halt = true;
                 Ok(())
@@ -160,22 +159,22 @@ impl PeerConnection {
         match message {
             Message::KeepAlive => {},
             Message::Bitfield(bytes) => {
-                for have_index in 0..self.have.len() {
+                for have_index in 0..self.them.has_pieces.len() {
                     let bytes_index = have_index / 8;
                     let index_into_byte = have_index % 8;
                     let byte = bytes[bytes_index];
                     let value = (byte & (1 << (7 - index_into_byte))) != 0;
-                    self.have[have_index] = value;
+                    self.them.has_pieces[have_index] = value;
                 };
                 try!(self.send_interested());
             },
             Message::Have(have_index) => {
-                self.have[have_index as usize] = true;
+                self.them.has_pieces[have_index as usize] = true;
                 try!(self.send_interested());
             },
             Message::Unchoke => {
-                if self.am_i_choked {
-                    self.am_i_choked = false;
+                if self.me.is_choked {
+                    self.me.is_choked = false;
                     try!(self.request_more_blocks());
                 }
             }
@@ -189,7 +188,7 @@ impl PeerConnection {
                 try!(self.request_more_blocks());
             }
             Message::Choke => {
-                self.am_i_choked = true;
+                self.me.is_choked = true;
             }
             _ => return Err(Error::UnknownRequestType(message))
         };
@@ -197,21 +196,21 @@ impl PeerConnection {
     }
 
     fn send_interested(&mut self) -> Result<(), Error> {
-        if self.am_i_interested == false {
-            self.am_i_interested = true;
+        if !self.me.is_interested {
+            self.me.is_interested = true;
             try!(self.send_message(Message::Interested));
         }
         Ok(())
     }
 
     fn request_more_blocks(&mut self) -> Result<(), Error> {
-        if self.am_i_choked == true {
+        if self.me.is_choked {
             return Ok(())
         }
         while self.requests_in_progress.len() < MAX_CONCURRENT_REQUESTS as usize {
             let next_block_to_request = {
                 let download = self.download_mutex.lock().unwrap();
-                download.next_block_to_request(&self.have)
+                download.next_block_to_request(&self.them.has_pieces)
             };
             match next_block_to_request {
                 Some((piece_index, block_index, block_length)) => {
@@ -231,6 +230,22 @@ impl PeerConnection {
             }
         }
         Ok(())
+    }
+}
+
+struct PeerMetadata {
+    has_pieces: Vec<bool>,
+    is_choked: bool,
+    is_interested: bool,
+}
+
+impl PeerMetadata {
+    fn new(has_pieces: Vec<bool>) -> PeerMetadata {
+        PeerMetadata {
+            has_pieces: has_pieces,
+            is_choked: true,
+            is_interested: false,
+        }
     }
 }
 
