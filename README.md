@@ -8,13 +8,14 @@ It supports:
 * Reading `.torrent` files (single-file torrents only)
 * Connecting to a tracker to find peers
 * Downloading a file from multiple peers in parallel
+* Queueing multiple requests with each peer for faster downloading (aka pipelining)
+* Uploading files to peers, and seeding existing files
 
 Not quite yet:
 
-* Uploading/seeding
 * Multi-file torrents
-* Queueing multiple requests with each peer for faster downloading
 * Connecting to multiple trackers
+* NAT traversal
 
 Requirements
 ------------
@@ -34,6 +35,10 @@ Clone the repository:
 To run:
 
     cargo run path/to/myfile.torrent
+
+To run specifying a port to listen on:
+
+    cargo run -- -p 3333 path/to/myfile.torrent
 
 Your file will be saved in the `downloads/` directory.
 
