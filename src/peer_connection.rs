@@ -150,6 +150,7 @@ impl PeerConnection {
             IPC::PieceComplete(piece_index) => {
                 self.me.has_pieces[piece_index as usize] = true;
                 try!(self.update_my_interested_status());
+                try!(self.send_message(Message::Have(piece_index)));
                 Ok(())
             },
             IPC::DownloadComplete => {
