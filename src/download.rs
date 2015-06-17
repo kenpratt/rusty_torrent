@@ -1,12 +1,13 @@
 use hash::{calculate_sha1, Sha1};
 use std::{convert, io};
 use std::fs::File;
-use std::io::{Seek, Write};
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 use std::sync::mpsc::{Sender, SendError};
 
 use ipc::IPC;
 use metainfo::Metainfo;
+use request_metadata::RequestMetadata;
 use request_queue::RequestQueue;
 
 pub const BLOCK_SIZE: u32 = 16384;
@@ -15,7 +16,8 @@ pub struct Download {
     pub our_peer_id: String,
     pub metainfo:    Metainfo,
     pieces:          Vec<Piece>,
-    file:            File,
+    file_w:          File,
+    file_r:          File,
     peer_channels:   Vec<Sender<IPC>>,
 }
 
@@ -38,14 +40,18 @@ impl Download {
 
         // create file
         let path = Path::new("downloads").join(&metainfo.info.name);
-        let file = try!(File::create(path));
-        try!(file.set_len(metainfo.info.length));
+        let file_w = try!(File::create(&path));
+        try!(file_w.set_len(metainfo.info.length));
+
+        // open file read handle
+        let file_r = try!(File::open(&path));
 
         Ok(Download {
             our_peer_id:   our_peer_id,
             metainfo:      metainfo,
             pieces:        pieces,
-            file:          file,
+            file_w:        file_w,
+            file_r:        file_r,
             peer_channels: vec![],
         })
     }
@@ -61,7 +67,7 @@ impl Download {
                 // if we already have this block, do an early return to avoid re-writing the piece, sending complete messages, etc
                 return Ok(())
             }
-            try!(piece.store(&mut self.file, block_index, data));
+            try!(piece.store(&mut self.file_w, block_index, data));
         }
 
         // notify peers that this block is complete
@@ -79,6 +85,21 @@ impl Download {
         }
 
         Ok(())
+    }
+
+    pub fn retrive_data(&mut self, request: &RequestMetadata) -> Result<Vec<u8>, Error> {
+        let ref piece = self.pieces[request.piece_index as usize];
+        if piece.is_complete {
+            let offset = (piece.index as u64 * piece.piece_length as u64) + request.offset as u64;
+            let file = &mut self.file_r;
+            try!(file.seek(io::SeekFrom::Start(offset)));
+            let mut buf = vec![];
+            try!(file.take(request.block_length as u64).read_to_end(&mut buf));
+            Ok(buf)
+        } else {
+            Err(Error::MissingPieceData)
+        }
+
     }
 
     pub fn is_interested(&self, peer_has_pieces: &[bool]) -> bool {
@@ -226,6 +247,7 @@ impl Block {
 
 #[derive(Debug)]
 pub enum Error {
+    MissingPieceData,
     IoError(io::Error),
 }
 

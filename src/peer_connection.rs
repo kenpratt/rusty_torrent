@@ -194,7 +194,6 @@ impl PeerConnection {
             },
             Message::NotInterested => {
                 self.them.is_interested = false;
-                // TODO stop sending them blocks
             },
             Message::Have(have_index) => {
                 self.them.has_pieces[have_index as usize] = true;
@@ -216,7 +215,7 @@ impl PeerConnection {
             Message::Request(piece_index, offset, length) => {
                 let block_index = offset / BLOCK_SIZE;
                 self.them.requests.add(piece_index, block_index, offset, length);
-                println!("Their request queue: {:?}", self.them.requests);
+                try!(self.upload_next_block());
             },
             Message::Piece(piece_index, offset, data) => {
                 let block_index = offset / BLOCK_SIZE;
@@ -231,7 +230,6 @@ impl PeerConnection {
             Message::Cancel(piece_index, offset, _) => {
                 let block_index = offset / BLOCK_SIZE;
                 self.them.requests.remove(piece_index, block_index);
-                println!("Their request queue: {:?}", self.them.requests);
             },
             _ => return Err(Error::UnknownRequestType(message))
         };
@@ -299,9 +297,24 @@ impl PeerConnection {
         if self.them.is_choked {
             self.them.is_choked = false;
             try!(self.send_message(Message::Unchoke));
-            // TODO start sending them blocks
+            try!(self.upload_next_block());
         }
         Ok(())
+    }
+
+    fn upload_next_block(&mut self) -> Result<(), Error> {
+        match self.them.requests.pop() {
+            Some(r) => {
+                let data = {
+                     let mut download = self.download_mutex.lock().unwrap();
+                    try!(download.retrive_data(&r))
+                };
+                try!(self.send_message(Message::Piece(r.piece_index, r.offset, data)));
+                try!(self.upload_next_block());
+                Ok(())
+            },
+            None => Ok(())
+        }
     }
 }
 

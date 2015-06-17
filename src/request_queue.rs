@@ -29,6 +29,14 @@ impl RequestQueue {
         }
     }
 
+    pub fn pop(&mut self) -> Option<RequestMetadata> {
+        if self.requests.len() > 0 {
+            Some(self.requests.remove(0))
+        } else {
+            None
+        }
+    }
+
     pub fn remove(&mut self, piece_index: u32, block_index: u32) -> Option<RequestMetadata> {
         match self.position(piece_index, block_index) {
             Some(i) => {
