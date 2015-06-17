@@ -90,6 +90,9 @@ impl PeerConnection {
         let stream_clone = self.stream.try_clone().unwrap();
         let funnel_thread = thread::spawn(move || MessageFunnel::start(stream_clone, tx_clone));
 
+        // send a bitfield message letting peer know what we have
+        try!(self.send_bitfield());
+
         // process messages received on the channel (both from the remote peer, and from Downlad)
         while !self.halt {
             let message = try!(self.rx.recv());
@@ -163,7 +166,8 @@ impl PeerConnection {
                     let bytes_index = have_index / 8;
                     let index_into_byte = have_index % 8;
                     let byte = bytes[bytes_index];
-                    let value = (byte & (1 << (7 - index_into_byte))) != 0;
+                    let mask = 1 << (7 - index_into_byte);
+                    let value = (byte & mask) != 0;
                     self.them.has_pieces[have_index] = value;
                 };
                 try!(self.send_interested());
@@ -201,6 +205,19 @@ impl PeerConnection {
             try!(self.send_message(Message::Interested));
         }
         Ok(())
+    }
+
+    fn send_bitfield(&mut self) -> Result<(), Error> {
+        let mut bytes: Vec<u8> = vec![0; (self.me.has_pieces.len() as f64 / 8 as f64).ceil() as usize];
+        for have_index in 0..self.me.has_pieces.len() {
+            let bytes_index = have_index / 8;
+            let index_into_byte = have_index % 8;
+            if self.me.has_pieces[have_index] {
+                let mask = 1 << (7 - index_into_byte);
+                bytes[bytes_index] |= mask;
+            }
+        };
+        self.send_message(Message::Bitfield(bytes))
     }
 
     fn request_more_blocks(&mut self) -> Result<(), Error> {
