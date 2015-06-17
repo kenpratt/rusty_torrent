@@ -1,5 +1,6 @@
 use request_metadata::RequestMetadata;
 
+#[derive(Debug)]
 pub struct RequestQueue {
     requests: Vec<RequestMetadata>,
 }

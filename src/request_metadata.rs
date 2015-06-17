@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct RequestMetadata {
     pub piece_index: u32,
     pub block_index: u32,

@@ -214,7 +214,9 @@ impl PeerConnection {
                 try!(self.request_more_blocks());
             },
             Message::Request(piece_index, offset, length) => {
-                // TODO implement Request
+                let block_index = offset / BLOCK_SIZE;
+                self.them.requests.add(piece_index, block_index, offset, length);
+                println!("Their request queue: {:?}", self.them.requests);
             },
             Message::Piece(piece_index, offset, data) => {
                 let block_index = offset / BLOCK_SIZE;
@@ -226,8 +228,10 @@ impl PeerConnection {
                 try!(self.update_my_interested_status());
                 try!(self.request_more_blocks());
             },
-            Message::Cancel(piece_index, offset, length) => {
-                // TODO implement Cancel
+            Message::Cancel(piece_index, offset, _) => {
+                let block_index = offset / BLOCK_SIZE;
+                self.them.requests.remove(piece_index, block_index);
+                println!("Their request queue: {:?}", self.them.requests);
             },
             _ => return Err(Error::UnknownRequestType(message))
         };
