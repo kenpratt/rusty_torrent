@@ -9,6 +9,7 @@ mod ipc;
 mod listener;
 mod metainfo;
 mod peer_connection;
+mod request_queue;
 mod tracker;
 mod tracker_response;
 

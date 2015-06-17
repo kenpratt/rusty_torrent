@@ -1,14 +1,16 @@
-use std::{any, convert, fmt, io};
+use rand;
+use rand::Rng;
+use std::{any, convert, fmt, io, thread};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Receiver, RecvError, Sender, SendError};
-use std::thread;
 
 use download;
 use download::{BLOCK_SIZE, Download};
 use ipc::IPC;
 use tracker_response::Peer;
+use request_queue::RequestQueue;
 
 const PROTOCOL: &'static str = "BitTorrent protocol";
 const MAX_CONCURRENT_REQUESTS: u32 = 10;
@@ -154,7 +156,7 @@ impl PeerConnection {
         match ipc {
             IPC::Message(message) => self.process_message(message),
             IPC::BlockComplete(piece_index, block_index) => {
-                match self.me.remove_request(piece_index, block_index) {
+                match self.me.requests.remove(piece_index, block_index) {
                     Some(r) => self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length)),
                     None => Ok(())
                 }
@@ -216,7 +218,7 @@ impl PeerConnection {
             },
             Message::Piece(piece_index, offset, data) => {
                 let block_index = offset / BLOCK_SIZE;
-                self.me.remove_request(piece_index, block_index);
+                self.me.requests.remove(piece_index, block_index);
                 {
                     let mut download = self.download_mutex.lock().unwrap();
                     try!(download.store(piece_index, block_index, data))
@@ -265,28 +267,27 @@ impl PeerConnection {
             return Ok(())
         }
 
-        while self.me.requests.len() < MAX_CONCURRENT_REQUESTS as usize {
-            let next_block_to_request = {
-                let download = self.download_mutex.lock().unwrap();
-                download.next_block_to_request(&self.them.has_pieces)
-            };
-            match next_block_to_request {
-                Some((piece_index, block_index, block_length)) => {
-                    let offset = block_index * BLOCK_SIZE;
-                    try!(self.send_message(Message::Request(piece_index, offset, block_length)));
-                    self.me.requests.push(RequestMetadata {
-                        piece_index: piece_index,
-                        block_index: block_index,
-                        offset: offset,
-                        block_length: block_length,
-                    });
-                },
-                None => {
-                    println!("We've downloaded all the pieces we can from this peer.");
-                    return Ok(())
-                }
+        let need_n = MAX_CONCURRENT_REQUESTS as usize - self.me.requests.len();
+        if need_n <= 0 {
+            return Ok(())
+        }
+
+        let mut candidate_blocks = {
+            let download = self.download_mutex.lock().unwrap();
+            download.incomplete_blocks_of_interest(&self.them.has_pieces, &self.me.requests)
+        };
+
+        // randomize block order
+        rand::thread_rng().shuffle(&mut candidate_blocks);
+
+        // add first N blocks
+        for (piece_index, block_index, block_length) in candidate_blocks.into_iter().take(need_n) {
+            let offset = block_index * BLOCK_SIZE;
+            if self.me.requests.add(piece_index, block_index, offset, block_length) {
+                try!(self.send_message(Message::Request(piece_index, offset, block_length)));
             }
         }
+
         Ok(())
     }
 
@@ -304,7 +305,7 @@ struct PeerMetadata {
     has_pieces: Vec<bool>,
     is_choked: bool,
     is_interested: bool,
-    requests: Vec<RequestMetadata>,
+    requests: RequestQueue,
 }
 
 impl PeerMetadata {
@@ -313,17 +314,7 @@ impl PeerMetadata {
             has_pieces: has_pieces,
             is_choked: true,
             is_interested: false,
-            requests: vec![],
-        }
-    }
-
-    fn remove_request(&mut self, piece_index: u32, block_index: u32) -> Option<RequestMetadata> {
-        match self.requests.iter().position(|r| r.matches(piece_index, block_index)) {
-            Some(i) => {
-                let r = self.requests.remove(i);
-                Some(r)
-            },
-            None => None
+            requests: RequestQueue::new(),
         }
     }
 }
@@ -373,15 +364,15 @@ fn read_n(stream: &mut TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, Error> 
     }
 }
 
-struct RequestMetadata {
-    piece_index: u32,
-    block_index: u32,
-    offset: u32,
-    block_length: u32,
+pub struct RequestMetadata {
+    pub piece_index: u32,
+    pub block_index: u32,
+    pub offset: u32,
+    pub block_length: u32,
 }
 
 impl RequestMetadata {
-    fn matches(&self, piece_index: u32, block_index: u32) -> bool {
+    pub fn matches(&self, piece_index: u32, block_index: u32) -> bool {
         self.piece_index == piece_index && self.block_index == block_index
     }
 }

@@ -1,14 +1,13 @@
+use hash::{calculate_sha1, Sha1};
 use std::{convert, io};
 use std::fs::File;
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::sync::mpsc::{Sender, SendError};
 
-use hash::{calculate_sha1, Sha1};
 use ipc::IPC;
 use metainfo::Metainfo;
-use rand;
-use rand::Rng;
+use request_queue::RequestQueue;
 
 pub const BLOCK_SIZE: u32 = 16384;
 
@@ -91,14 +90,18 @@ impl Download {
         false
     }
 
-    pub fn next_block_to_request(&self, peer_has_pieces: &[bool]) -> Option<(u32, u32, u32)> {
-        match self.get_random_incomplete_piece(peer_has_pieces) {
-            Some(piece) => match piece.get_random_incomplete_to_request() {
-                Some(block) => Some((piece.index, block.index, block.length)),
-                None => None
-            },
-            None => None
+    pub fn incomplete_blocks_of_interest(&self, peer_has_pieces: &[bool], request_queue: &RequestQueue) -> Vec<(u32, u32, u32)> {
+        let mut out = vec![];
+        for piece in self.pieces.iter() {
+            if !piece.is_complete && peer_has_pieces[piece.index as usize] {
+                for block in piece.blocks.iter() {
+                    if block.data.is_none() && !request_queue.has(piece.index, block.index) {
+                        out.push((piece.index, block.index, block.length));
+                    }
+                }
+            }
         }
+        out
     }
 
     pub fn have_pieces(&self) -> Vec<bool> {
@@ -112,11 +115,6 @@ impl Download {
             }
         }
         true
-    }
-
-    fn get_random_incomplete_piece(&self, peer_has_pieces: &[bool]) -> Option<&Piece> {
-        let incomplete_pieces: Vec<&Piece> = self.pieces.iter().filter(|x| !x.is_complete && peer_has_pieces[x.index as usize]).collect();
-        rand::thread_rng().choose(&incomplete_pieces).map(|x| *x)
     }
 
     fn broadcast(&mut self, ipc: IPC) {
@@ -188,15 +186,6 @@ impl Piece {
             }
         }
         Ok(())
-    }
-
-    fn get_random_incomplete_to_request(&self) -> Option<&Block> {
-        if self.is_complete {
-            return None
-        }
-
-        let empty_blocks: Vec<&Block> = self.blocks.iter().filter(|x| x.data.is_none()).collect();
-        rand::thread_rng().choose(&empty_blocks).map(|x| *x)
     }
 
     fn has_block(&self, block_index: u32) -> bool {
