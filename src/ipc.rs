@@ -1,6 +1,8 @@
 use peer_connection::Message;
 
+#[derive(Clone)]
 pub enum IPC {
-    CancelRequest(u32, u32),
+    BlockComplete(u32, u32),
+    DownloadComplete,
     Message(Message),
 }

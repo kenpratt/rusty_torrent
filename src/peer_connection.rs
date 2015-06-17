@@ -22,6 +22,7 @@ pub fn accept(stream: TcpStream, download_mutex: Arc<Mutex<Download>>) -> Result
 }
 
 pub struct PeerConnection {
+    halt: bool,
     download_mutex: Arc<Mutex<Download>>,
     stream: TcpStream,
     have: Vec<bool>,
@@ -50,6 +51,7 @@ impl PeerConnection {
         }
 
         let conn = PeerConnection {
+            halt: false,
             download_mutex: download_mutex,
             stream: stream,
             have: vec![false; num_pieces as usize],
@@ -81,12 +83,12 @@ impl PeerConnection {
         let funnel_thread = thread::spawn(move || MessageFunnel::start(stream_clone, tx_clone));
 
         // process messages received on the channel (both from the remote peer, and from Downlad)
-        let mut is_complete = false;
-        while !is_complete {
+        while !self.halt {
             let message = try!(self.rx.recv());
-            is_complete = try!(self.process(message));
+            try!(self.process(message));
         }
-        println!("Download complete, disconnecting");
+
+        println!("Disconnecting");
         try!(self.stream.shutdown(Shutdown::Both));
         try!(funnel_thread.join());
         Ok(())
@@ -122,23 +124,26 @@ impl PeerConnection {
         Ok(())
     }
 
-    fn process(&mut self, ipc: IPC) -> Result<bool, Error> {
+    fn process(&mut self, ipc: IPC) -> Result<(), Error> {
         match ipc {
             IPC::Message(message) => self.process_message(message),
-            IPC::CancelRequest(piece_index, block_index) => {
+            IPC::BlockComplete(piece_index, block_index) => {
                 match self.requests_in_progress.iter().position(|r| r.matches(piece_index, block_index)) {
                     Some(i) => {
                         let r = self.requests_in_progress.remove(i);
-                        try!(self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length)));
+                        self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length))
                     },
-                    None => {}
+                    None => Ok(())
                 }
-                Ok(false)
-            }
+            },
+            IPC::DownloadComplete => {
+                self.halt = true;
+                Ok(())
+            },
         }
     }
 
-    fn process_message(&mut self, message: Message) -> Result<bool, Error> {
+    fn process_message(&mut self, message: Message) -> Result<(), Error> {
         match message {
             Message::KeepAlive => {},
             Message::Bitfield(bytes) => {
@@ -164,23 +169,18 @@ impl PeerConnection {
             Message::Piece(piece_index, offset, data) => {
                 let block_index = offset / BLOCK_SIZE;
                 self.requests_in_progress.retain(|r| !r.matches(piece_index, block_index));
-
-                let is_complete = {
+                {
                     let mut download = self.download_mutex.lock().unwrap();
                     try!(download.store(piece_index, block_index, data))
-                };
-                if is_complete {
-                    return Ok(true)
-                } else {
-                    try!(self.request_more_blocks());
                 }
+                try!(self.request_more_blocks());
             }
             Message::Choke => {
                 self.am_i_choked = true;
             }
             _ => return Err(Error::UnknownRequestType(message))
         };
-        Ok(false)
+        Ok(())
     }
 
     fn send_interested(&mut self) -> Result<(), Error> {
@@ -279,6 +279,7 @@ impl RequestMetadata {
     }
 }
 
+#[derive(Clone)]
 pub enum Message {
     KeepAlive,
     Choke,

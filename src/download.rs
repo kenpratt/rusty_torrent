@@ -55,18 +55,21 @@ impl Download {
         self.peer_channels.push(channel);
     }
 
-    pub fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<bool, Error> {
+    pub fn store(&mut self, piece_index: u32, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
         {
             let piece = &mut self.pieces[piece_index as usize];
             try!(piece.store(&mut self.file, block_index, data));
         }
 
         // notify peers that this block is complete
-        for channel in self.peer_channels.iter() {
-            channel.send(IPC::CancelRequest(piece_index, block_index));
+        self.broadcast(IPC::BlockComplete(piece_index, block_index));
+
+        // notify peers if download is complete
+        if self.is_complete() {
+            self.broadcast(IPC::DownloadComplete);
         }
 
-        Ok(self.is_complete())
+        Ok(())
     }
 
     pub fn next_block_to_request(&self, peer_has_pieces: &[bool]) -> Option<(u32, u32, u32)> {
@@ -91,6 +94,12 @@ impl Download {
     fn get_random_incomplete_piece(&self, peer_has_pieces: &[bool]) -> Option<&Piece> {
         let incomplete_pieces: Vec<&Piece> = self.pieces.iter().filter(|x| !x.is_complete && peer_has_pieces[x.index as usize]).collect();
         rand::thread_rng().choose(&incomplete_pieces).map(|x| *x)
+    }
+
+    fn broadcast(&self, ipc: IPC) {
+        for channel in self.peer_channels.iter() {
+            channel.send(ipc.clone());
+        }
     }
 }
 
