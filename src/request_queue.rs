@@ -1,4 +1,4 @@
-use peer_connection::RequestMetadata;
+use request_metadata::RequestMetadata;
 
 pub struct RequestQueue {
     requests: Vec<RequestMetadata>,
