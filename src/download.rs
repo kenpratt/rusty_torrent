@@ -1,6 +1,6 @@
 use hash::{calculate_sha1, Sha1};
 use std::{convert, io};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::Path;
 use std::sync::mpsc::{Sender, SendError};
@@ -16,8 +16,7 @@ pub struct Download {
     pub our_peer_id: String,
     pub metainfo:    Metainfo,
     pieces:          Vec<Piece>,
-    file_w:          File,
-    file_r:          File,
+    file:            File,
     peer_channels:   Vec<Sender<IPC>>,
 }
 
@@ -27,6 +26,10 @@ impl Download {
         let piece_length = metainfo.info.piece_length;
         let num_pieces = metainfo.info.num_pieces;
 
+        // create/open file
+        let path = Path::new("downloads").join(&metainfo.info.name);
+        let mut file = try!(OpenOptions::new().create(true).read(true).write(true).open(path));
+
         // create pieces
         let mut pieces = vec![];
         for i in 0..num_pieces {
@@ -35,23 +38,15 @@ impl Download {
             } else {
                 (file_length - (piece_length as u64 * (num_pieces as u64 - 1))) as u32
             };
-            pieces.push(Piece::new(i, len, piece_length, metainfo.info.pieces[i as usize].clone()));
+            let piece = try!(Piece::new(i, len, piece_length, metainfo.info.pieces[i as usize].clone(), &mut file));
+            pieces.push(piece);
         }
-
-        // create file
-        let path = Path::new("downloads").join(&metainfo.info.name);
-        let file_w = try!(File::create(&path));
-        try!(file_w.set_len(metainfo.info.length));
-
-        // open file read handle
-        let file_r = try!(File::open(&path));
 
         Ok(Download {
             our_peer_id:   our_peer_id,
             metainfo:      metainfo,
             pieces:        pieces,
-            file_w:        file_w,
-            file_r:        file_r,
+            file:          file,
             peer_channels: vec![],
         })
     }
@@ -67,7 +62,7 @@ impl Download {
                 // if we already have this block, do an early return to avoid re-writing the piece, sending complete messages, etc
                 return Ok(())
             }
-            try!(piece.store(&mut self.file_w, block_index, data));
+            try!(piece.store(&mut self.file, block_index, data));
         }
 
         // notify peers that this block is complete
@@ -91,7 +86,7 @@ impl Download {
         let ref piece = self.pieces[request.piece_index as usize];
         if piece.is_complete {
             let offset = (piece.index as u64 * piece.piece_length as u64) + request.offset as u64;
-            let file = &mut self.file_r;
+            let file = &mut self.file;
             try!(file.seek(io::SeekFrom::Start(offset)));
             let mut buf = vec![];
             try!(file.take(request.block_length as u64).read_to_end(&mut buf));
@@ -157,7 +152,7 @@ struct Piece {
 }
 
 impl Piece {
-    fn new(index: u32, length: u32, piece_length: u32, hash: Sha1) -> Piece {
+    fn new(index: u32, length: u32, piece_length: u32, hash: Sha1, file: &mut File) -> Result<Piece, Error> {
         // create blocks
         let mut blocks = vec![];
         let num_blocks = (length as f64 / BLOCK_SIZE as f64).ceil() as u32;
@@ -170,13 +165,20 @@ impl Piece {
             blocks.push(Block::new(i, len));
         }
 
-        Piece {
+        // check if this piece is already complete
+        let offset = index as u64 * piece_length as u64;
+        try!(file.seek(io::SeekFrom::Start(offset)));
+        let mut buf = vec![];
+        try!(file.take(length as u64).read_to_end(&mut buf));
+        let is_complete = hash == calculate_sha1(&buf);
+
+        Ok(Piece {
             index:        index,
             piece_length: piece_length,
             hash:         hash,
             blocks:       blocks,
-            is_complete:  false
-        }
+            is_complete:  is_complete,
+        })
     }
 
     fn store(&mut self, file: &mut File, block_index: u32, data: Vec<u8>) -> Result<(), Error> {
@@ -194,6 +196,7 @@ impl Piece {
             }
 
             // validate that piece data matches SHA1 hash
+            println!("Have {} bytes of data for index {}", data.len(), self.index);
             if self.hash == calculate_sha1(&data) {
                 println!("Piece {} is complete and correct, writing to the file.", self.index);
                 let offset = self.index as u64 * self.piece_length as u64;
