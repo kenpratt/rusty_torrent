@@ -175,7 +175,7 @@ impl PeerConnection {
             },
             Message::Interested => {
                 self.them.is_interested = true;
-                // TODO start sending them blocks
+                try!(self.unchoke_them());
             },
             Message::NotInterested => {
                 self.them.is_interested = false;
@@ -273,6 +273,15 @@ impl PeerConnection {
                     return Ok(())
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn unchoke_them(&mut self) -> Result<(), Error> {
+        if self.them.is_choked {
+            self.them.is_choked = false;
+            try!(self.send_message(Message::Unchoke));
+            // TODO start sending them blocks
         }
         Ok(())
     }
