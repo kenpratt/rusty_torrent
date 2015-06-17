@@ -15,6 +15,8 @@ use getopts::Options;
 use rand::Rng;
 use std::{any, convert, env, process, thread};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+
 use download::Download;
 
 const PEER_ID_PREFIX: &'static str = "-RC0001-";
@@ -86,7 +88,7 @@ fn run(filename: &str, listener_port: u16) -> Result<(), Error> {
     let download_mutex = Arc::new(Mutex::new(download));
 
     // spawn threads to connect to peers and start the download
-    let peer_threads: Vec<thread::JoinHandle<()>> = peers.into_iter().map(|peer| {
+    let peer_threads: Vec<JoinHandle<()>> = peers.into_iter().map(|peer| {
         let mutex = download_mutex.clone();
         thread::spawn(move || {
             match peer_connection::connect(&peer, mutex) {

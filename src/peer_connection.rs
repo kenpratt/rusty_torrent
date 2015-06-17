@@ -1,5 +1,4 @@
-use std::{convert, io};
-use std::fmt;
+use std::{any, convert, fmt, io};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -14,8 +13,8 @@ use tracker_response::Peer;
 const PROTOCOL: &'static str = "BitTorrent protocol";
 const MAX_CONCURRENT_REQUESTS: u32 = 10;
 
-pub fn connect(peer: &Peer, download: Arc<Mutex<Download>>) -> Result<(), Error> {
-    PeerConnection::connect(peer, download)
+pub fn connect(peer: &Peer, download_mutex: Arc<Mutex<Download>>) -> Result<(), Error> {
+    PeerConnection::connect(peer, download_mutex)
 }
 
 pub struct PeerConnection {
@@ -46,7 +45,7 @@ impl PeerConnection {
             download.register_peer(tx.clone());
         }
 
-        let mut conn = PeerConnection {
+        let conn = PeerConnection {
             download_mutex: download_mutex,
             stream: stream,
             have: vec![false; num_pieces as usize],
@@ -79,8 +78,8 @@ impl PeerConnection {
             is_complete = try!(self.process(message));
         }
         println!("Download complete, disconnecting");
-        self.stream.shutdown(Shutdown::Both);
-        funnel_thread.join();
+        try!(self.stream.shutdown(Shutdown::Both));
+        try!(funnel_thread.join());
         Ok(())
     }
 
@@ -411,6 +410,7 @@ pub enum Error {
     UnknownRequestType(Message),
     ReceiveError(RecvError),
     SendError(SendError<IPC>),
+    Any(Box<any::Any + Send>),
 }
 
 impl convert::From<download::Error> for Error {
@@ -434,5 +434,11 @@ impl convert::From<RecvError> for Error {
 impl convert::From<SendError<IPC>> for Error {
     fn from(err: SendError<IPC>) -> Error {
         Error::SendError(err)
+    }
+}
+
+impl convert::From<Box<any::Any + Send>> for Error {
+    fn from(err: Box<any::Any + Send>) -> Error {
+        Error::Any(err)
     }
 }
