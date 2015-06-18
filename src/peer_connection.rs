@@ -162,7 +162,7 @@ impl PeerConnection {
     }
 
     fn send_message(&mut self, message: Message) -> Result<(), Error> {
-        println!("Sending: {:?}", message);
+        // println!("Sending: {:?}", message);
         try!(self.outgoing_tx.send(message));
         Ok(())
     }
@@ -196,7 +196,7 @@ impl PeerConnection {
     }
 
     fn process_message(&mut self, message: Message) -> Result<(), Error> {
-        println!("Received: {:?}", message);
+        // println!("Received: {:?}", message);
         match message {
             Message::KeepAlive => {},
             Message::Choke => {

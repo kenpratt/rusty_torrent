@@ -45,6 +45,11 @@ To run specifying a port to listen on:
 
 Your file will be saved in the `downloads/` directory.
 
+To build and run an optimized version (will enable significantly faster downloads):
+
+    cargo run --release -- path/to/myfile.torrent
+    cargo run --release -- -p 3333 path/to/myfile.torrent
+
 To watch for changes and auto-rebuild (on OS X):
 
     gem install kicker -s http://gemcutter.org
