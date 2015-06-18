@@ -6,15 +6,18 @@ A BitTorrent client, written in Rust.
 It supports:
 
 * Reading `.torrent` files (single-file torrents only)
-* Connecting to a tracker to find peers
+* Connecting to a tracker to discover peers
 * Downloading a file from multiple peers in parallel
 * Queueing multiple requests with each peer for faster downloading (aka pipelining)
-* Uploading files to peers, and seeding existing files
+* Uploading files to peers, and seeding existing files from disk
+* Resuming partial downloads
+* Verification of correctness of downloaded chunks
 
-Not quite yet:
+Not yet:
 
 * Multi-file torrents
 * Connecting to multiple trackers
+* Upload throttling/congestion control
 * NAT traversal
 
 Requirements
