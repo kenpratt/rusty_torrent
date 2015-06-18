@@ -6,4 +6,5 @@ pub enum IPC {
     PieceComplete(u32),
     DownloadComplete,
     Message(Message),
+    BlockUploaded,
 }

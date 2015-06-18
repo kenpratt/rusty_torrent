@@ -29,8 +29,9 @@ pub struct PeerConnection {
     stream: TcpStream,
     me: PeerMetadata,
     them: PeerMetadata,
-    rx: Receiver<IPC>,
-    tx: Sender<IPC>,
+    incoming_tx: Sender<IPC>,
+    outgoing_tx: Sender<Message>,
+    upload_in_progress: bool,
 }
 
 impl PeerConnection {
@@ -52,12 +53,15 @@ impl PeerConnection {
         };
         let num_pieces = have_pieces.len();
 
-        // register IPC channel with Download
-        let (tx, rx) = channel::<IPC>();
+        // create & register incoming IPC channel with Download
+        let (incoming_tx, incoming_rx) = channel::<IPC>();
         {
             let mut download = download_mutex.lock().unwrap();
-            download.register_peer(tx.clone());
+            download.register_peer(incoming_tx.clone());
         }
+
+        // create outgoing Message channel
+        let (outgoing_tx, outgoing_rx) = channel::<Message>();
 
         let conn = PeerConnection {
             halt: false,
@@ -65,17 +69,18 @@ impl PeerConnection {
             stream: stream,
             me: PeerMetadata::new(have_pieces),
             them: PeerMetadata::new(vec![false; num_pieces]),
-            rx: rx,
-            tx: tx,
+            incoming_tx: incoming_tx,
+            outgoing_tx: outgoing_tx,
+            upload_in_progress: false,
         };
 
-        try!(conn.run(send_handshake_first));
+        try!(conn.run(send_handshake_first, incoming_rx, outgoing_rx));
 
         println!("Disconnected");
         Ok(())
     }
 
-    fn run(mut self, send_handshake_first: bool) -> Result<(), Error> {
+    fn run(mut self, send_handshake_first: bool, incoming_rx: Receiver<IPC>, outgoing_rx: Receiver<Message>) -> Result<(), Error> {
         if send_handshake_first {
             try!(self.send_handshake());
             try!(self.receive_handshake());
@@ -86,23 +91,33 @@ impl PeerConnection {
 
         println!("Handshake complete");
 
-        // spawn a thread to funnel incoming messages from the socket into the channel
-        let tx_clone = self.tx.clone();
-        let stream_clone = self.stream.try_clone().unwrap();
-        let funnel_thread = thread::spawn(move || MessageFunnel::start(stream_clone, tx_clone));
+        // spawn a thread to funnel incoming messages from the socket into the incoming message channel
+        let downstream_funnel_thread = {
+            let stream = self.stream.try_clone().unwrap();
+            let tx = self.incoming_tx.clone();
+            thread::spawn(move || DownstreamMessageFunnel::start(stream, tx))
+        };
+
+        // spawn a thread to funnel outgoing messages from the outgoing message channel into the socket
+        let upstream_funnel_thread = {
+            let stream = self.stream.try_clone().unwrap();
+            let tx = self.incoming_tx.clone();
+            thread::spawn(move || UpstreamMessageFunnel::start(stream, outgoing_rx, tx))
+        };
 
         // send a bitfield message letting peer know what we have
         try!(self.send_bitfield());
 
         // process messages received on the channel (both from the remote peer, and from Downlad)
         while !self.halt {
-            let message = try!(self.rx.recv());
+            let message = try!(incoming_rx.recv());
             try!(self.process(message));
         }
 
         println!("Disconnecting");
         try!(self.stream.shutdown(Shutdown::Both));
-        try!(funnel_thread.join());
+        try!(downstream_funnel_thread.join());
+        try!(upstream_funnel_thread.join());
         Ok(())
     }
 
@@ -148,7 +163,7 @@ impl PeerConnection {
 
     fn send_message(&mut self, message: Message) -> Result<(), Error> {
         println!("Sending: {:?}", message);
-        try!(self.stream.write_all(&message.serialize()));
+        try!(self.outgoing_tx.send(message));
         Ok(())
     }
 
@@ -170,6 +185,11 @@ impl PeerConnection {
             IPC::DownloadComplete => {
                 self.halt = true;
                 try!(self.update_my_interested_status());
+                Ok(())
+            },
+            IPC::BlockUploaded => {
+                self.upload_in_progress = false;
+                try!(self.upload_next_block());
                 Ok(())
             },
         }
@@ -303,19 +323,18 @@ impl PeerConnection {
     }
 
     fn upload_next_block(&mut self) -> Result<(), Error> {
-        if self.them.is_choked || !self.them.is_interested {
+        if self.upload_in_progress || self.them.is_choked || !self.them.is_interested {
             return Ok(());
         }
 
         match self.them.requests.pop() {
             Some(r) => {
                 let data = {
-                     let mut download = self.download_mutex.lock().unwrap();
+                    let mut download = self.download_mutex.lock().unwrap();
                     try!(download.retrive_data(&r))
                 };
-                try!(self.send_message(Message::Piece(r.piece_index, r.offset, data)));
-                try!(self.upload_next_block());
-                Ok(())
+                self.upload_in_progress = true;
+                self.send_message(Message::Piece(r.piece_index, r.offset, data))
             },
             None => Ok(())
         }
@@ -340,14 +359,14 @@ impl PeerMetadata {
     }
 }
 
-struct MessageFunnel {
+struct DownstreamMessageFunnel {
     stream: TcpStream,
     tx: Sender<IPC>,
 }
 
-impl MessageFunnel {
+impl DownstreamMessageFunnel {
     fn start(stream: TcpStream, tx: Sender<IPC>) {
-        let mut funnel = MessageFunnel {
+        let mut funnel = DownstreamMessageFunnel {
             stream: stream,
             tx: tx,
         };
@@ -371,6 +390,44 @@ impl MessageFunnel {
             Ok(Message::new(&message[0], &message[1..]))
         } else {
             Ok(Message::KeepAlive)
+        }
+    }
+}
+
+struct UpstreamMessageFunnel {
+    stream: TcpStream,
+    rx: Receiver<Message>,
+    tx: Sender<IPC>,
+}
+
+impl UpstreamMessageFunnel {
+    fn start(stream: TcpStream, rx: Receiver<Message>, tx: Sender<IPC>) {
+        let mut funnel = UpstreamMessageFunnel {
+            stream: stream,
+            rx: rx,
+            tx: tx,
+        };
+        match funnel.run() {
+            Ok(_) => {},
+            Err(e) => println!("Error: {:?}", e)
+        }
+    }
+
+    fn run(&mut self) -> Result<(), Error> {
+        loop {
+            let message = try!(self.rx.recv());
+            let is_block_upload = match message {
+                Message::Piece(_, _, _) => true,
+                _ => false
+            };
+
+            // do a blocking write to the TCP stream
+            try!(self.stream.write_all(&message.serialize()));
+
+            // notify the main PeerConnection thread that this block is finished
+            if is_block_upload {
+                try!(self.tx.send(IPC::BlockUploaded));
+            }
         }
     }
 }
@@ -527,7 +584,8 @@ pub enum Error {
     NotEnoughData(u32, u32),
     UnknownRequestType(Message),
     ReceiveError(RecvError),
-    SendError(SendError<IPC>),
+    SendMessageError(SendError<Message>),
+    SendIPCError(SendError<IPC>),
     Any(Box<any::Any + Send>),
 }
 
@@ -549,9 +607,15 @@ impl convert::From<RecvError> for Error {
     }
 }
 
+impl convert::From<SendError<Message>> for Error {
+    fn from(err: SendError<Message>) -> Error {
+        Error::SendMessageError(err)
+    }
+}
+
 impl convert::From<SendError<IPC>> for Error {
     fn from(err: SendError<IPC>) -> Error {
-        Error::SendError(err)
+        Error::SendIPCError(err)
     }
 }
 
