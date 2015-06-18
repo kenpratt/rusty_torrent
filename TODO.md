@@ -8,3 +8,6 @@
 * Refactor TcpStream reads to be buffered in a more sensible way, return disconnects as control signal or specialized error.
 * Create separate thread for sending messages on TcpStream, so that chunks being uploaded don't block the main control thread for each PeerConnection.
 * Only verify the file if it already existed on boot.
+* Put file writing in a thread? (Measure time taken waiting for locks to see if this is delaying the PeerConnections.)
+* Parallelize hash verification?
+* Prioritize completing partially-completed pieces, to spread out hash calculation.

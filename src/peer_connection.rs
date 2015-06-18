@@ -303,6 +303,10 @@ impl PeerConnection {
     }
 
     fn upload_next_block(&mut self) -> Result<(), Error> {
+        if self.them.is_choked || !self.them.is_interested {
+            return Ok(());
+        }
+
         match self.them.requests.pop() {
             Some(r) => {
                 let data = {
