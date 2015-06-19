@@ -1,6 +1,7 @@
 use rand;
 use rand::Rng;
 use std::{any, convert, fmt, io, thread};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -32,6 +33,7 @@ pub struct PeerConnection {
     incoming_tx: Sender<IPC>,
     outgoing_tx: Sender<Message>,
     upload_in_progress: bool,
+    to_request: HashMap<(u32, u32), (u32, u32, u32)>,
 }
 
 impl PeerConnection {
@@ -72,6 +74,7 @@ impl PeerConnection {
             incoming_tx: incoming_tx,
             outgoing_tx: outgoing_tx,
             upload_in_progress: false,
+            to_request: HashMap::new(),
         };
 
         try!(conn.run(send_handshake_first, incoming_rx, outgoing_rx));
@@ -171,6 +174,7 @@ impl PeerConnection {
         match ipc {
             IPC::Message(message) => self.process_message(message),
             IPC::BlockComplete(piece_index, block_index) => {
+                self.to_request.remove(&(piece_index, block_index));
                 match self.me.requests.remove(piece_index, block_index) {
                     Some(r) => self.send_message(Message::Cancel(r.piece_index, r.offset, r.block_length)),
                     None => Ok(())
@@ -217,6 +221,7 @@ impl PeerConnection {
             },
             Message::Have(have_index) => {
                 self.them.has_pieces[have_index as usize] = true;
+                self.queue_blocks(have_index);
                 try!(self.update_my_interested_status());
                 try!(self.request_more_blocks());
             },
@@ -228,6 +233,9 @@ impl PeerConnection {
                     let mask = 1 << (7 - index_into_byte);
                     let value = (byte & mask) != 0;
                     self.them.has_pieces[have_index] = value;
+                    if value {
+                        self.queue_blocks(have_index as u32);
+                    }
                 };
                 try!(self.update_my_interested_status());
                 try!(self.request_more_blocks());
@@ -256,11 +264,21 @@ impl PeerConnection {
         Ok(())
     }
 
-    fn update_my_interested_status(&mut self) -> Result<(), Error> {
-        let am_interested = {
+    fn queue_blocks(&mut self, piece_index: u32) {
+        let incomplete_blocks = {
             let download = self.download_mutex.lock().unwrap();
-            download.is_interested(&self.them.has_pieces)
+            download.incomplete_blocks_for_piece(piece_index)
         };
+
+        for (block_index, block_length) in incomplete_blocks {
+            if !self.me.requests.has(piece_index, block_index) {
+                self.to_request.insert((piece_index, block_index), (piece_index, block_index, block_length));
+            }
+        }
+    }
+
+    fn update_my_interested_status(&mut self) -> Result<(), Error> {
+        let am_interested = self.me.requests.len() > 0 || self.to_request.len() > 0;
 
         if self.me.is_interested != am_interested {
             self.me.is_interested = am_interested;
@@ -285,25 +303,24 @@ impl PeerConnection {
     }
 
     fn request_more_blocks(&mut self) -> Result<(), Error> {
-        if self.me.is_choked || !self.me.is_interested {
+        if self.me.is_choked || !self.me.is_interested || self.to_request.len() == 0 {
             return Ok(())
         }
 
-        let need_n = MAX_CONCURRENT_REQUESTS as usize - self.me.requests.len();
-        if need_n <= 0 {
-            return Ok(())
-        }
+        while self.me.requests.len() < MAX_CONCURRENT_REQUESTS as usize {
+            let len = self.to_request.len();
+            if len == 0 {
+                return Ok(());
+            }
 
-        let mut candidate_blocks = {
-            let download = self.download_mutex.lock().unwrap();
-            download.incomplete_blocks_of_interest(&self.them.has_pieces, &self.me.requests)
-        };
+            // remove a block at random from to_request
+            let (piece_index, block_index, block_length) = {
+                let index = rand::thread_rng().gen_range(0, len);
+                let target = self.to_request.keys().nth(index).unwrap().clone();
+                self.to_request.remove(&target).unwrap()
+            };
 
-        // randomize block order
-        rand::thread_rng().shuffle(&mut candidate_blocks);
-
-        // add first N blocks
-        for (piece_index, block_index, block_length) in candidate_blocks.into_iter().take(need_n) {
+            // add a request
             let offset = block_index * BLOCK_SIZE;
             if self.me.requests.add(piece_index, block_index, offset, block_length) {
                 try!(self.send_message(Message::Request(piece_index, offset, block_length)));

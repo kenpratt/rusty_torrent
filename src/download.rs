@@ -8,7 +8,6 @@ use std::sync::mpsc::{Sender, SendError};
 use ipc::IPC;
 use metainfo::Metainfo;
 use request_metadata::RequestMetadata;
-use request_queue::RequestQueue;
 
 pub const BLOCK_SIZE: u32 = 16384;
 
@@ -39,7 +38,7 @@ impl Download {
             } else {
                 (file_length - offset) as u32
             };
-            let mut piece = Piece::new(i, length, offset, metainfo.info.pieces[i as usize].clone());
+            let mut piece = Piece::new(length, offset, metainfo.info.pieces[i as usize].clone());
             try!(piece.verify(&mut file));
             pieces.push(piece);
         }
@@ -99,31 +98,17 @@ impl Download {
 
     }
 
-    pub fn is_interested(&self, peer_has_pieces: &[bool]) -> bool {
-        for piece in self.pieces.iter() {
-            if !piece.is_complete && peer_has_pieces[piece.index as usize] {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn incomplete_blocks_of_interest(&self, peer_has_pieces: &[bool], request_queue: &RequestQueue) -> Vec<(u32, u32, u32)> {
-        let mut out = vec![];
-        for piece in self.pieces.iter() {
-            if !piece.is_complete && peer_has_pieces[piece.index as usize] {
-                for block in piece.blocks.iter() {
-                    if !block.is_complete && !request_queue.has(piece.index, block.index) {
-                        out.push((piece.index, block.index, block.length));
-                    }
-                }
-            }
-        }
-        out
-    }
-
     pub fn have_pieces(&self) -> Vec<bool> {
         self.pieces.iter().map(|p| p.is_complete).collect()
+    }
+
+    pub fn incomplete_blocks_for_piece(&self, piece_index: u32) -> Vec<(u32,u32)> {
+        let ref piece = self.pieces[piece_index as usize];
+        if !piece.is_complete {
+            piece.blocks.iter().filter(|b| !b.is_complete).map(|b| (b.index, b.length)).collect()
+        } else {
+            vec![]
+        }
     }
 
     fn is_complete(&self) -> bool {
@@ -146,7 +131,6 @@ impl Download {
 }
 
 struct Piece {
-    index:       u32,
     length:      u32,
     offset:      u64,
     hash:        Sha1,
@@ -155,7 +139,7 @@ struct Piece {
 }
 
 impl Piece {
-    fn new(index: u32, length: u32, offset: u64, hash: Sha1) -> Piece {
+    fn new(length: u32, offset: u64, hash: Sha1) -> Piece {
         // create blocks
         let mut blocks = vec![];
         let num_blocks = (length as f64 / BLOCK_SIZE as f64).ceil() as u32;
@@ -169,7 +153,6 @@ impl Piece {
         }
 
         Piece {
-            index:       index,
             length:      length,
             offset:      offset,
             hash:        hash,
