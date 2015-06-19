@@ -451,10 +451,19 @@ impl UpstreamMessageFunnel {
 
 fn read_n(stream: &mut TcpStream, bytes_to_read: u32) -> Result<Vec<u8>, Error> {
     let mut buf = vec![];
-    let bytes_read = stream.take(bytes_to_read as u64).read_to_end(&mut buf);
+    try!(read_n_to_buf(stream, &mut buf, bytes_to_read));
+    Ok(buf)
+}
+fn read_n_to_buf(stream: &mut TcpStream, buf: &mut Vec<u8>, bytes_to_read: u32) -> Result<(), Error> {
+    if bytes_to_read == 0 {
+        return Ok(());
+    }
+
+    let bytes_read = stream.take(bytes_to_read as u64).read_to_end(buf);
     match bytes_read {
-        Ok(n) if n == bytes_to_read as usize => Ok(buf),
-        Ok(n) => Err(Error::NotEnoughData(bytes_to_read, n as u32)),
+        Ok(0) => Err(Error::SocketClosed),
+        Ok(n) if n == bytes_to_read as usize => Ok(()),
+        Ok(n) => read_n_to_buf(stream, buf, bytes_to_read - n as u32),
         Err(e) => try!(Err(e))
     }
 }
@@ -598,7 +607,7 @@ pub enum Error {
     ConnectingToSelf,
     DownloadError(download::Error),
     IoError(io::Error),
-    NotEnoughData(u32, u32),
+    SocketClosed,
     UnknownRequestType(Message),
     ReceiveError(RecvError),
     SendMessageError(SendError<Message>),
