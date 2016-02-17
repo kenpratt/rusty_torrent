@@ -1,6 +1,7 @@
 [package]
 name = "rusty_torrent"
 version = "0.0.1"
+authors = ["ken@kenpratt.net", "pietromenna@yahoo.com"]
 
 [dependencies]
 bencode = "0.1"
