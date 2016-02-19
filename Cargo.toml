@@ -1,6 +1,12 @@
 [package]
 name = "rusty_torrent"
+description = "A BitTorrent client, written in Rust."
+repository = "https://github.com/kenpratt/rusty_torrent"
 version = "0.0.1"
+readme = "README.md"
+keywords = ["bittorrent"]
+authors = ["ken@kenpratt.net", "pietromenna@yahoo.com"]
+
 
 [dependencies]
 bencode = "0.1"

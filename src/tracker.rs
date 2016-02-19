@@ -37,7 +37,7 @@ pub fn get_peers(peer_id: &str, metainfo: &Metainfo, listener_port: u16) ->Resul
 
 fn encode_query_params(params: &[(&str, &str)]) -> String {
     let param_strings: Vec<String> = params.iter().map(|&(k, v)| format!("{}={}", k, v)).collect();
-    param_strings.connect("&")
+    param_strings.join("&")
 }
 
 #[derive(Debug)]
